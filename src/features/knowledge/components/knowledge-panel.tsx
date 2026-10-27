@@ -461,14 +461,6 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
     ];
   }, [wordCount, charCount, outline.length]);
 
-  if (!currentProject) {
-    return (
-      <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-        Open a project first
-      </div>
-    );
-  }
-
   // Sidebar uses meta.title when set so the tree reflects the user's
   // explicit title input. Falls back to the Rust-derived title (which
   // is either the first `#` line or filename) for legacy entries.
@@ -485,6 +477,14 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
       }),
     [entries, metaPages],
   );
+
+  if (!currentProject) {
+    return (
+      <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+        Open a project first
+      </div>
+    );
+  }
 
   return (
     <div

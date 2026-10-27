@@ -47,7 +47,6 @@ import { abs, MOCK_ORG_ID } from "../project";
  * reads those messages.
  */
 function fail(message: string): never {
-  // oxlint-disable-next-line no-throw-literal -- Rust's `Err(String)`, not an Error.
   throw message;
 }
 

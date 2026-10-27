@@ -117,7 +117,6 @@ function useLinkCheckouts(
     })),
   });
   const key = results.map((r) => (r.data === undefined ? "?" : (r.data?.path ?? "-"))).join("|");
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `key` is what changes.
   return useMemo(() => {
     const map = new Map<string, Checkout | undefined>();
     links.forEach((link, index) => map.set(linkKey(link), results[index]?.data));
@@ -148,7 +147,6 @@ function useLinkLineCounts(
     })),
   });
   const key = results.map((r) => r.dataUpdatedAt).join("|");
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `key` is what changes.
   return useMemo(() => {
     const map = new Map<string, LineCounts>();
     groups.forEach((group, index) => {

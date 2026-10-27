@@ -906,14 +906,12 @@ function Body({ text, directory }: { text: string; directory: OrgDirectory }) {
       {parts.map((part, i) =>
         part.mention ? (
           <span
-            // oxlint-disable-next-line react/no-array-index-key
             key={i}
             className="rounded bg-[var(--atlas-element-emphasis)] px-1 text-[var(--foreground)]"
           >
             @{directory.byId.get(part.text)?.name ?? part.text}
           </span>
         ) : (
-          // oxlint-disable-next-line react/no-array-index-key
           <span key={i}>{part.text}</span>
         ),
       )}

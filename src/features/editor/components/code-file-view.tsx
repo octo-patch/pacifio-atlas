@@ -489,7 +489,6 @@ function EditableFileSurface({
       cursorFrame.current = 0;
     };
     // `readCursor` reads everything through refs.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // A pending reveal selects its target once the editor is there to hold it.

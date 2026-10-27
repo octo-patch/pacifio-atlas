@@ -86,7 +86,6 @@ export function sessionPullRequestHandlers(list: ThreadList): MockHandlers {
       change(threadId, (links) => {
         const n = Number(number);
         if (!pullRequestEntry(n)) {
-          // oxlint-disable-next-line no-throw-literal -- Rust's `Err(PrError)`, a plain object.
           throw { kind: "notFound" };
         }
         if (links.some((l) => same(l, PULL_REQUEST_REPOSITORY, n))) return null;
@@ -107,12 +106,10 @@ export function sessionPullRequestHandlers(list: ThreadList): MockHandlers {
       change(threadId, (links) => {
         const link = links.find((l) => same(l, String(repository), Number(number)));
         if (!link) {
-          // oxlint-disable-next-line no-throw-literal -- Rust's `Err(PrError)`, a plain object.
           throw { kind: "invalid", message: "That pull request is not linked to this session." };
         }
         const on = Boolean(watching);
         if (on && link.snapshot && link.snapshot.state !== "open") {
-          // oxlint-disable-next-line no-throw-literal -- Rust's `Err(PrError)`, a plain object.
           throw { kind: "invalid", message: "The pull request is not open." };
         }
         if (link.watching === on) return null;

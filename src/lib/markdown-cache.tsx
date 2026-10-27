@@ -670,12 +670,5 @@ export function CachedMarkdown({
     );
   }
 
-  return (
-    <div
-      ref={ref}
-      className={cls}
-      // oxlint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <div ref={ref} className={cls} dangerouslySetInnerHTML={{ __html: html }} />;
 }

@@ -66,7 +66,6 @@ import { setStatus, streamText } from "../fake-agent";
 import { mockCurrentBranchName } from "./git";
 
 function fail(error: PrError): never {
-  // oxlint-disable-next-line no-throw-literal -- Rust's `Err(PrError)`, a plain object.
   throw error;
 }
 
