@@ -173,7 +173,7 @@ export const MarkdownFile = memo(function MarkdownFile({
             trusted && docPath && typeof p.src === "string" ? (
               <PreviewImage {...p} docPath={docPath} src={p.src} />
             ) : (
-              // eslint-disable-next-line jsx-a11y/alt-text
+              // oxlint-disable-next-line jsx-a11y/alt-text
               <img {...p} className={IMG_CLASS} />
             ),
 

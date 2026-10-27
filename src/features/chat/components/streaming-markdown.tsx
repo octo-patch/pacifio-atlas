@@ -158,7 +158,7 @@ const TransientMarkdown = memo(function TransientMarkdown({
           : "prose-chat text-[var(--foreground)] leading-relaxed break-words select-text",
         className,
       )}
-      // eslint-disable-next-line react/no-danger
+      // oxlint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -258,7 +258,7 @@ function useBlocks(source: string, streaming: boolean, whole: boolean): string[]
       split(latest.current);
     });
     // `split` closes over refs only; re-creating it per render is not a dep.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [source, streaming, whole]);
 
   useEffect(

@@ -65,7 +65,7 @@ export function useComposerDraft(
     return () => flushWith(persist);
     // Keyed on the scope alone: `save` is captured per scope so the cleanup
     // writes the draft back to the scope it was typed in.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, flushWith]);
 
   return { initialValue, onDocChange, latest, flush };

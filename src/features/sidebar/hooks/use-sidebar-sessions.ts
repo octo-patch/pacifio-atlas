@@ -232,7 +232,7 @@ export function useSidebarSessions(): SidebarSessions {
           })
         : EMPTY_PARTITION,
     // `now` re-runs the sort when a snooze ends.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [groups, projects, scopeProjectId, sidebarSort, now],
   );
 

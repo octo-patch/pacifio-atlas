@@ -80,7 +80,7 @@ export const ReadmeView = memo(function ReadmeView({ source, root }: Props) {
           ol: (p) => <ol className="list-decimal pl-6 space-y-1 my-3">{p.children}</ol>,
           li: (p) => <li className="leading-relaxed">{p.children}</li>,
           img: (p) => (
-            // eslint-disable-next-line jsx-a11y/alt-text
+            // oxlint-disable-next-line jsx-a11y/alt-text
             <img {...p} className="inline-block max-w-full h-auto rounded my-1 align-middle" />
           ),
           code(props) {

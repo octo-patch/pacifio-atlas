@@ -420,7 +420,7 @@ export function EnvironmentSection({ item }: { item: AgentItem }) {
     if (incoming === published.current) return;
     setRows(toRows(generic));
     // `generic` is derived from the catalog; its signature is the dependency.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming]);
 
   if (!launch || item.state !== "installed") return null;

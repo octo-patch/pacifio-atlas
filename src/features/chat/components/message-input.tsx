@@ -853,7 +853,7 @@ export function MessageInput({
     // Undefined = never set for this session → seed from the global pref.
     const eff = nativeEffort ?? loadNativeEffort();
     if (nativeBound || nativeEffort === undefined) setNativeEffort(tabId, eff);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, agentType, nativeBound]);
   // The RTK compression toggle was seeded and re-pushed here. It is gone with
   // the runtime that implemented it (#54) — the ported engine has no

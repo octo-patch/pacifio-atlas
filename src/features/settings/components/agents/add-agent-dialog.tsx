@@ -64,7 +64,7 @@ export function AddAgentDialog({
           (e.description ?? "").toLowerCase().includes(q)),
     );
     // `signature` moves whenever the arrays do; they are not stable refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, query, installs]);
 
   const install = async (entry: AcpRegistryEntry) => {

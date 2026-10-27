@@ -147,7 +147,7 @@ function Dot() {
 function joinDots(parts: (ReactNode | false | null | undefined)[]): ReactNode {
   const kept = parts.filter(Boolean) as ReactNode[];
   return kept.map((part, i) => (
-    // eslint-disable-next-line react/no-array-index-key -- the parts are fixed
+    // oxlint-disable-next-line react/no-array-index-key -- the parts are fixed
     <Fragment key={i}>
       {i > 0 && <Dot />}
       {part}

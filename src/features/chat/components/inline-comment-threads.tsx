@@ -107,7 +107,7 @@ function useCommentHighlights(
       clearHighlightRanges(DRAFT_HIGHLIGHT, me);
     };
     // `key` stands in for `passages`, which is rebuilt per render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [proseRef, key, draft]);
 }
 

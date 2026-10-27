@@ -570,7 +570,7 @@ export function CachedMarkdown({
     };
     // `html` intentionally omitted: re-running on our own setHtml would loop.
     // `key` covers `source`, `fileRoot` and `trustedPaths`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [key, priority]);
 
   // One delegated click handler: copy-code buttons, file chips, and safe
@@ -674,7 +674,7 @@ export function CachedMarkdown({
     <div
       ref={ref}
       className={cls}
-      // eslint-disable-next-line react/no-danger
+      // oxlint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

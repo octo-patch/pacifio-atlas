@@ -78,7 +78,7 @@ export function BaseRefPicker({
   useEffect(() => {
     if (open) document.getElementById(rowId(highlighted))?.scrollIntoView?.({ block: "nearest" });
     // `rowId` is derived from `listId`, which never changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [open, highlighted]);
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {

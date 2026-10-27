@@ -586,18 +586,18 @@ function getProcessor(): Processor {
       .use(remarkParse)
       .use(remarkGfm)
       .use(remarkRehype, { allowDangerousHtml: false })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       .use(rehypeMentionChips as any)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       .use(rehypeFileChips as any)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       .use(rehypeLinkIcons as any)
       // `detect: false`: only highlight fenced blocks with an explicit language
       // tag. Auto-detection ran highlight.js across ~37 languages for EVERY
       // un-tagged code block — the dominant per-parse cost. Agents almost always
       // tag their fences, so this is a large, near-invisible win.
       .use(rehypeHighlight, { detect: false, plainText: ["text", "plaintext"] })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       .use(rehypeSanitize, SANITIZE_SCHEMA as any)
       .use(rehypeStringify) as unknown as Processor;
   }
