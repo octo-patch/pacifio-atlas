@@ -780,12 +780,8 @@
 .atlas-chat-composer {
   color: var(--foreground);
   font-family:
-    var(--atlas-composer-font, var(--font-sans)),
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+    var(--atlas-composer-font, var(--font-sans)), system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
   font-size: 13px;
   line-height: 1.55;
 }

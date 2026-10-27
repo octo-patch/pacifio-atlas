@@ -65,11 +65,11 @@ beforeEach(() => {
     },
   );
   // happy-dom lays nothing out: give the conversation column a width.
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.hasAttribute("data-chat-drop-zone") ? WIDTH : 0;
-    },
-  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.hasAttribute("data-chat-drop-zone") ? WIDTH : 0;
+  });
   useChatStore.setState({
     sessions: {},
     pendingPermissions: {},

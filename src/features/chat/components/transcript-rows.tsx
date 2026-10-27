@@ -663,19 +663,16 @@ export const MarkerGroupRowView = memo(function MarkerGroupRowView({
       <span className={cn("min-w-0 truncate", row.running && "atlas-thinking-shimmer")}>
         {row.running ? row.liveLabel : row.summary}
       </span>
-      {row.running &&
-        (row.liveDone > 0 || row.liveStartedAt !== null) && (
-          // Gap rather than a "·" between the two figures: the elapsed one is
-          // written straight to the DOM and is blank for its first second, so
-          // any separator React rendered beside it would dangle on its own
-          // until the first tick.
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-2xs text-[var(--atlas-text-disabled)] tabular-nums">
-            {row.liveDone > 0 && <span>{row.liveDone} done</span>}
-            {row.liveStartedAt !== null && (
-              <LiveElapsed startedAt={row.liveStartedAt} minMs={1000} />
-            )}
-          </span>
-        )}
+      {row.running && (row.liveDone > 0 || row.liveStartedAt !== null) && (
+        // Gap rather than a "·" between the two figures: the elapsed one is
+        // written straight to the DOM and is blank for its first second, so
+        // any separator React rendered beside it would dangle on its own
+        // until the first tick.
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-2xs text-[var(--atlas-text-disabled)] tabular-nums">
+          {row.liveDone > 0 && <span>{row.liveDone} done</span>}
+          {row.liveStartedAt !== null && <LiveElapsed startedAt={row.liveStartedAt} minMs={1000} />}
+        </span>
+      )}
       <ChevronRight
         size={ICON_PX}
         strokeWidth={ICON_STROKE}

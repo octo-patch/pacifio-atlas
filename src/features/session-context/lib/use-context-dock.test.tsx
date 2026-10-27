@@ -65,11 +65,11 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.hasAttribute("data-panel") ? panelWidth : 0;
-    },
-  );
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.hasAttribute("data-panel") ? panelWidth : 0;
+  });
   useSessionDetailsStore.setState({ hidden: {}, popoverFor: null });
 });
 afterEach(() => {
