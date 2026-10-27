@@ -14,7 +14,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -70,10 +70,14 @@ console.log(
 // missing bash, a missing cargo-sweep or a failed collection prints one line
 // and dev starts anyway.
 if (cmd === "tauri" && args[0] === "dev" && process.platform !== "win32") {
-  const gc = spawnSync("bash", [join(root, "scripts", "target-gc.sh"), join(root, "target")], {
+  // The directory the build will use: cargo honours CARGO_TARGET_DIR, resolved
+  // against the working directory it is invoked from. No timeout: killing bash
+  // would leave a `cargo sweep` child deleting artifacts under the compile that
+  // follows, so we wait for the collection to finish (it is a no-op most runs).
+  const target = resolve(process.cwd(), env.CARGO_TARGET_DIR || join(root, "target"));
+  const gc = spawnSync("bash", [join(root, "scripts", "target-gc.sh"), target], {
     stdio: "inherit",
     env,
-    timeout: 120_000,
   });
   if (gc.status !== 0) console.log("[with-posthog-env] target-gc skipped or failed; continuing");
 }

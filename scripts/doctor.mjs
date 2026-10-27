@@ -22,6 +22,10 @@ function run(cmd, args, timeout = 2000) {
   return `${r.stdout ?? ""}`.trim();
 }
 
+/** Only a failed spawn with ENOENT means the executable is not installed. */
+const installed = (cmd) =>
+  spawnSync(cmd, ["--version"], { timeout: 2000 }).error?.code !== "ENOENT";
+
 let requiredFailed = false;
 function report(level, label, hint) {
   const mark = level === "ok" ? "✓" : level === "warn" ? "!" : "✗";
@@ -62,14 +66,17 @@ check(
 );
 
 const rustup = run("rustup", ["show", "active-toolchain"]);
+const rustupInstalled = installed("rustup");
 const activeRust = rustup?.split(/\s/)[0] ?? "";
 check(
   rustup !== null && activeRust.startsWith(`${wantRust}`),
   true,
   rustup === null
-    ? "rustup not found"
+    ? rustupInstalled
+      ? `rust toolchain ${wantRust} not installed`
+      : "rustup not found"
     : `rust toolchain ${activeRust} (rust-toolchain.toml pins ${wantRust})`,
-  rustup === null ? "https://rustup.rs" : "rustup show  (installs the pinned toolchain)",
+  rustupInstalled ? `rustup toolchain install ${wantRust}` : "https://rustup.rs",
 );
 
 if (process.platform === "darwin") {
