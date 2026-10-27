@@ -33,28 +33,32 @@ let disk: Record<string, ProjectEntry[]>;
 let indexHits: string[];
 
 // The virtualizer draws nothing into a zero-sized scroller.
-const sized = (key: "offsetHeight" | "offsetWidth", value: number) =>
+const sized = (key: SizeKey, value: number) =>
   Object.getOwnPropertyDescriptor(HTMLElement.prototype, key) ??
   Object.defineProperty(HTMLElement.prototype, key, { configurable: true, get: () => value });
-const originals = {
-  h: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight"),
-  w: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth"),
-};
+const SIZES = {
+  offsetHeight: 600,
+  offsetWidth: 300,
+  // The virtualizer reads the scroller's rect from client*, not offset*.
+  clientHeight: 600,
+  clientWidth: 300,
+} as const;
+type SizeKey = keyof typeof SIZES;
+const KEYS = Object.keys(SIZES) as SizeKey[];
+const originals = new Map(
+  KEYS.map((key) => [key, Object.getOwnPropertyDescriptor(HTMLElement.prototype, key)]),
+);
 beforeAll(() => {
-  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
-    configurable: true,
-    get: () => 600,
-  });
-  Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
-    configurable: true,
-    get: () => 300,
-  });
+  for (const key of KEYS) {
+    Object.defineProperty(HTMLElement.prototype, key, {
+      configurable: true,
+      get: () => SIZES[key],
+    });
+  }
 });
 afterAll(() => {
-  for (const [key, desc] of [
-    ["offsetHeight", originals.h],
-    ["offsetWidth", originals.w],
-  ] as const) {
+  for (const key of KEYS) {
+    const desc = originals.get(key);
     if (desc) Object.defineProperty(HTMLElement.prototype, key, desc);
     else sized(key, 0);
   }
