@@ -132,7 +132,7 @@ export function SessionDetailsCard({
           </p>
         )}
         {density === "full" && <LineageSection tabId={tabId} projectPath={projectPath} />}
-        <ActivitySection tabId={tabId} />
+        <ActivitySection tabId={tabId} presentation={presentation} />
       </div>
     </div>
   );
