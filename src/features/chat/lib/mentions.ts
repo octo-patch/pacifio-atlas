@@ -41,7 +41,7 @@ export type {
 } from "./org-mentions";
 import type { PackComponentKind } from "@/features/skills/lib/types";
 // NOTE: skills are no longer a mention kind — inlining a skill body into the
-// prompt was retired (see docs/adr/0001-slash-tokens-pass-through-skills-are-not-inlined.md).
+// prompt was retired (see docs/adr/0025-slash-tokens-pass-through-skills-are-not-inlined.md).
 // Skill invocation goes through the agent-advertised `/` passthrough now.
 // Pack-delivered components (command/agent/rule) are unrelated and stay.
 

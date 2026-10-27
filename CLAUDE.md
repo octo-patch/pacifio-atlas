@@ -18,7 +18,7 @@ drift out of date without anything noticing.
 | how a feature crosses the stack; a subsystem's file paths       | `docs/architecture.md`                                                                                           |
 | verification gates, branching, PR checklist, telemetry rules    | `CONTRIBUTING.md`                                                                                                |
 | what a term means                                               | `CONTEXT.md`                                                                                                     |
-| why a decision is what it is                                    | `docs/adr/` (0003 and 0004 are each used twice)                                                                  |
+| why a decision is what it is                                    | `docs/adr/`                                                                                                      |
 | tokens, type/radius/elevation/z-index/motion scales, primitives | `docs/reference/design-system.md`                                                                                |
 | theme keys, theme import, icon themes, config, keybindings      | `docs/reference/`                                                                                                |
 | the browser mock backend                                        | `src/dev/mock-backend/README.md`                                                                                 |

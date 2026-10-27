@@ -862,7 +862,7 @@ export function MessageInput({
   // real command list via `available_commands_update` — Codex's arrives with
   // the binding, Claude's a few seconds after session/new (the SDK discovers
   // skills/plugins/MCP prompts first), and the native agent's with its
-  // session, published by the seam. Per ADR 0003 there is no fallback
+  // session, published by the seam. Per ADR 0005 there is no fallback
   // catalogue: the picker shows a loading state (see `slashCommandsLoading`
   // below) during that gap instead.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
