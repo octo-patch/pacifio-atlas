@@ -57,7 +57,7 @@ const BASELINE: Record<string, number> = {
   "typescript/no-explicit-any": 5,
 };
 
-const DIRECTIVE = /\b(eslint|oxlint)-disable(?:-next-line|-line)?\s+([^\n]*)/g;
+const DIRECTIVE = /\b(eslint|oxlint)-disable(?:-next-line|-line)?(?![\w/-])\s*([^\n]*)/g;
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -72,11 +72,14 @@ function walk(dir: string): string[] {
 interface Scan {
   counts: Record<string, number>;
   eslintPrefixed: string[];
+  /** Directives naming no rule: they silence every rule in their scope. */
+  bare: string[];
 }
 
 function scan(): Scan {
   const counts: Record<string, number> = {};
   const eslintPrefixed: string[] = [];
+  const bare: string[] = [];
   for (const file of walk(path.join(REPO_ROOT, SCAN_ROOT))) {
     const where = path.relative(REPO_ROOT, file).split(path.sep).join("/");
     readFileSync(file, "utf8")
@@ -90,20 +93,28 @@ function scan(): Scan {
             .split(",")
             .map((r) => r.trim())
             .filter(Boolean);
+          if (rules.length === 0) bare.push(`${where}:${i + 1}`);
           for (const rule of rules) counts[rule] = (counts[rule] ?? 0) + 1;
         }
       });
   }
-  return { counts, eslintPrefixed };
+  return { counts, eslintPrefixed, bare };
 }
 
 describe("lint-suppression ratchet", () => {
-  const { counts, eslintPrefixed } = scan();
+  const { counts, eslintPrefixed, bare } = scan();
 
   it("uses the oxlint prefix, never eslint", () => {
     expect(
       eslintPrefixed,
       "oxlint is the only linter. Write `oxlint-disable-next-line <rule>` instead.",
+    ).toEqual([]);
+  });
+
+  it("names the rule it suppresses", () => {
+    expect(
+      bare,
+      "A bare `oxlint-disable` silences every rule in its scope and escapes the count. Name the rule.",
     ).toEqual([]);
   });
 
