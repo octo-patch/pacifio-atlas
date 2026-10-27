@@ -68,7 +68,6 @@ export function usePullRequestFilesViewed(
       answered.add(path);
       answeredFrom.current.delete(path);
     }
-    // oxlint-disable-next-line react/set-state-in-effect -- A read arriving is what settles the presses it answers for.
     setOverlay((current) => settleFileViewedOverlay(current, states, pending, answered));
   }, [states]);
 

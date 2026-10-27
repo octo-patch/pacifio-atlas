@@ -32,10 +32,11 @@ import { fileURLToPath } from "node:url";
  * Counted per comment, not per rule listed in it, so `a, b` counts once for
  * each rule named.
  *
- * Note that a suppression for a rule the config does not enable (today: most of
- * `react-hooks/*`, `jsx-a11y/*`, `no-console`) does nothing yet; it records the
- * intent for the day that plugin is switched on, and is counted all the same.
- * `typescript/no-explicit-any` IS enabled as an error in `.oxlintrc.json`, so a
+ * Note that a suppression for a rule the config leaves off (today: the React
+ * Compiler rules, `react-hooks/exhaustive-deps`, most `jsx-a11y/*`, `no-console`)
+ * does nothing yet; it records the intent for the day that rule is switched on,
+ * and is counted all the same. `react-hooks/rules-of-hooks` and
+ * `typescript/no-explicit-any` ARE enabled as errors in `.oxlintrc.json`, so a
  * new `any` needs a suppression, and a suppression shows up here.
  */
 
@@ -49,11 +50,7 @@ const BASELINE: Record<string, number> = {
   "jsx-a11y/no-autofocus": 6,
   "jsx-a11y/no-static-element-interactions": 1,
   "no-control-regex": 6,
-  "no-throw-literal": 6,
-  "react-hooks/exhaustive-deps": 50,
-  "react/no-array-index-key": 5,
-  "react/no-danger": 2,
-  "react/set-state-in-effect": 1,
+  "react-hooks/exhaustive-deps": 46,
   "typescript/no-explicit-any": 5,
 };
 

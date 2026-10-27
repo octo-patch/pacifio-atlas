@@ -1,4 +1,3 @@
-/* oxlint-disable react/no-array-index-key -- Table rows and columns have stable positions and may contain identical values. */
 import { parseDelimitedPreview } from "../lib/delimited-preview";
 import { FileSurfaceNotice } from "./file-surface-chrome";
 

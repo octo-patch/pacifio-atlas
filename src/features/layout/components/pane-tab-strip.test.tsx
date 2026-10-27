@@ -119,36 +119,36 @@ describe("overflow", () => {
     const TAB_W = 80;
     const VIEW_W = 200;
     // Each tab is laid out at its index; the viewport is 200px of a 480px row.
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        const id = this.dataset.tabId;
-        const scroller = this.closest<HTMLElement>("[data-pane-tab-strip]");
-        const scrolled = scroller?.scrollLeft ?? 0;
-        const left = id ? TABS.findIndex((t) => t.id === id) * TAB_W - scrolled : 0;
-        const width = id ? TAB_W : VIEW_W;
-        return {
-          left,
-          right: left + width,
-          width,
-          top: 0,
-          bottom: 24,
-          height: 24,
-          x: left,
-          y: 0,
-          toJSON: () => ({}),
-        } as DOMRect;
-      },
-    );
-    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
-      function (this: HTMLElement) {
-        return this.hasAttribute("data-pane-tab-strip") ? TABS.length * TAB_W : 0;
-      },
-    );
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(
-      function (this: HTMLElement) {
-        return this.hasAttribute("data-pane-tab-strip") ? VIEW_W : 0;
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const id = this.dataset.tabId;
+      const scroller = this.closest<HTMLElement>("[data-pane-tab-strip]");
+      const scrolled = scroller?.scrollLeft ?? 0;
+      const left = id ? TABS.findIndex((t) => t.id === id) * TAB_W - scrolled : 0;
+      const width = id ? TAB_W : VIEW_W;
+      return {
+        left,
+        right: left + width,
+        width,
+        top: 0,
+        bottom: 24,
+        height: 24,
+        x: left,
+        y: 0,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.hasAttribute("data-pane-tab-strip") ? TABS.length * TAB_W : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.hasAttribute("data-pane-tab-strip") ? VIEW_W : 0;
+    });
 
     const { container, rerender, getByLabelText } = strip({ activeId: "a" });
     const viewport = container.querySelector<HTMLElement>("[data-pane-tab-strip]")!;

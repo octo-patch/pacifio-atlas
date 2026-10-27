@@ -325,57 +325,56 @@ export function CommsComposer({
 
   return (
     <div className="relative shrink-0 px-2 pb-2 pt-1">
-      {mentionQuery &&
-        matches.length > 0 && (
-          // The house mention-picker shell (`src/features/mentions`): opaque
-          // black, NOT frosted — a backdrop blur here re-blends against the
-          // composer and glitches with the caret — plus the keycap footer, so
-          // the two pickers in the app read as one component.
-          <div
-            className={cn(
-              "absolute bottom-full left-2 right-2 z-popover mb-1 flex flex-col overflow-hidden rounded-lg",
-              "border border-border bg-popover",
-              "shadow-lg inset-highlight",
-            )}
-            // Selecting with the mouse must not blur the editor first.
-            onMouseDown={(e) => e.preventDefault()}
-          >
-            {/* No section header and no email line: one kind of thing is
+      {mentionQuery && matches.length > 0 && (
+        // The house mention-picker shell (`src/features/mentions`): opaque
+        // black, NOT frosted — a backdrop blur here re-blends against the
+        // composer and glitches with the caret — plus the keycap footer, so
+        // the two pickers in the app read as one component.
+        <div
+          className={cn(
+            "absolute bottom-full left-2 right-2 z-popover mb-1 flex flex-col overflow-hidden rounded-lg",
+            "border border-border bg-popover",
+            "shadow-lg inset-highlight",
+          )}
+          // Selecting with the mouse must not blur the editor first.
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {/* No section header and no email line: one kind of thing is
                 listed here and the name is what gets typed, so both were
                 furniture in a popup that sits over the conversation. */}
-            <div className="max-h-[180px] flex-1 overflow-y-auto hide-scrollbar py-1">
-              {matches.map((m, i) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onMouseEnter={() => setHighlighted(i)}
-                  onClick={() => insertMention(m)}
-                  className={cn(
-                    "flex h-control-md w-full items-center gap-1.5 px-2 text-left transition-colors cursor-pointer",
-                    i === highlighted
-                      ? "bg-[var(--atlas-element-selected)]"
-                      : "hover:bg-[var(--atlas-element-hover)]",
-                  )}
-                >
-                  <CommsAvatar member={m} size={16} />
-                  <span className="min-w-0 flex-1 truncate text-xs text-foreground">{m.name}</span>
-                </button>
-              ))}
-            </div>
-            <div className="flex h-control-md shrink-0 items-center justify-between border-t border-border px-2">
-              <span className="flex items-center gap-1.5 text-3xs text-muted-foreground">
-                <Kbd>↑↓</Kbd>
-                <span>navigate</span>
-                <Kbd>↵</Kbd>
-                <span>select</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-3xs text-muted-foreground">
-                <Kbd>esc</Kbd>
-                <span>close</span>
-              </span>
-            </div>
+          <div className="max-h-[180px] flex-1 overflow-y-auto hide-scrollbar py-1">
+            {matches.map((m, i) => (
+              <button
+                key={m.id}
+                type="button"
+                onMouseEnter={() => setHighlighted(i)}
+                onClick={() => insertMention(m)}
+                className={cn(
+                  "flex h-control-md w-full items-center gap-1.5 px-2 text-left transition-colors cursor-pointer",
+                  i === highlighted
+                    ? "bg-[var(--atlas-element-selected)]"
+                    : "hover:bg-[var(--atlas-element-hover)]",
+                )}
+              >
+                <CommsAvatar member={m} size={16} />
+                <span className="min-w-0 flex-1 truncate text-xs text-foreground">{m.name}</span>
+              </button>
+            ))}
           </div>
-        )}
+          <div className="flex h-control-md shrink-0 items-center justify-between border-t border-border px-2">
+            <span className="flex items-center gap-1.5 text-3xs text-muted-foreground">
+              <Kbd>↑↓</Kbd>
+              <span>navigate</span>
+              <Kbd>↵</Kbd>
+              <span>select</span>
+            </span>
+            <span className="flex items-center gap-1.5 text-3xs text-muted-foreground">
+              <Kbd>esc</Kbd>
+              <span>close</span>
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* The reply/edit strip, TUCKED into the top of the composer rather than
           floating above it — the same construction as the agent composer's AI
