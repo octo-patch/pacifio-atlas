@@ -506,11 +506,11 @@ const TabColumn = memo(function TabColumn({
           <div className="flex min-w-fit flex-1 items-center gap-0.5">
             {!main && <SurfaceAdd groupId={groupId} />}
             <span className="flex-1" />
-            {/* The session's group (Details, terminal, ⋯), portalled in by
-                its chat panel. Only for a session tab: any other tab leaves
-                this end of the bar as it is. The window's group (the panel
-                toggle, the account) comes after, in the header at the
-                window's right edge (`TopbarTrailing`). */}
+            {/* The session's controls (pins, Details), portalled in by its
+                chat panel. Only for a session tab: any other tab leaves this
+                end of the bar as it is. The window's group (the panel toggle)
+                comes after, in the header at the window's right edge
+                (`TopbarTrailing`). */}
             {activeTab?.type === "chat" && (
               <SessionHeaderSlot key={activeTab.id} tabId={activeTab.id} />
             )}

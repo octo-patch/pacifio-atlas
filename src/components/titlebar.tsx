@@ -25,8 +25,6 @@ import { toast } from "sonner";
 import type { Window as TauriWindow } from "@tauri-apps/api/window";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import { updater } from "@/features/updater/lib/updater-api";
-import { AccountButton } from "@/features/auth/components/account-button";
-import { HelpSubmenu } from "./help-submenu";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { CapturePopover } from "@/features/capture/components/capture-popover";
 import { StatusDot } from "@/features/capture/components/capture-status";
@@ -118,10 +116,9 @@ export function useWindowDrag() {
  * borders running through it. The window's own controls then have to live in
  * whichever column is at the window's edge: `leading` (the corner cluster
  * while the sidebar is closed, the `org / project` label) goes in the leftmost
- * header and `trailing` (update, notifications, account, and the
- * Windows/Linux window buttons) in the rightmost. See `columnChrome` for which
- * column that is.
- *
+ * header and `trailing` (update, notifications, the right panel toggle, and
+ * the Windows/Linux window buttons) in the rightmost. See `columnChrome` for
+ * which column that is. *
  * Every stretch of it drags the window.
  */
 export function PaneHeader({
@@ -271,17 +268,15 @@ export function ProjectBreadcrumb() {
 
 /**
  * The bar's right end, the window's group: the dock while it has something to
- * say, then the right panel toggle while a project is open, then the account,
- * always. It is the one place the avatar lives (the sidebar footer has none).
- * The account sits outside the `currentProject` guard on purpose: a fresh
- * install has no project open, and sign-in must be reachable from that empty
- * state.
+ * say, then the right panel toggle while a project is open, then the
+ * Windows/Linux window buttons. The account is not here: it lives in the
+ * sidebar's footer.
  *
  * This group never moves: it is drawn by whichever header is at the window's
- * right edge, so the panel toggle and the avatar keep their places whether
- * the panel is shown or not. A gap, nothing louder, sets it apart from the
- * session's own controls (`SessionHeaderControls`), which come and go with
- * the tab.
+ * right edge, and nothing a tab adds comes after it, so the panel toggle is
+ * the bar's last control on every tab and whether the panel is shown or not.
+ * It is spaced like the session's own controls (`SessionHeaderControls`), so
+ * the icons read as one even row.
  */
 function TopbarTrailing() {
   const currentProject = useAppStore.use.currentProject();
@@ -289,7 +284,7 @@ function TopbarTrailing() {
     <div
       data-window-controls
       className={cn(
-        "ml-auto flex shrink-0 items-center gap-1 pl-3",
+        "ml-auto flex shrink-0 items-center gap-0.5",
         !(isWindows || isLinux) && "pr-2",
       )}
     >
@@ -299,7 +294,6 @@ function TopbarTrailing() {
           <RightPanelToggle />
         </HintGroup>
       ) : null}
-      <AccountButton menuExtra={<HelpSubmenu />} />
       {(isWindows || isLinux) && <WindowControls />}
     </div>
   );
@@ -390,6 +384,8 @@ function ActionDock() {
   // step in only while they have something to say; the bell lives
   // permanently in the sidebar's footer.
   const items = [update, notifications].filter((i): i is DockItem => i !== null);
+  // Nothing to say, nothing drawn: an empty dock would still take a gap.
+  if (items.length === 0) return null;
   return <TitlebarDock items={items} />;
 }
 

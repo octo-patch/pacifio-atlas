@@ -23,6 +23,8 @@
 
 import { useEffect, useRef } from "react";
 import { CornerCluster, useWindowDrag } from "@/components/titlebar";
+import { HelpSubmenu } from "@/components/help-submenu";
+import { AccountButton } from "@/features/auth/components/account-button";
 import { cn } from "@/lib/utils";
 import {
   KnowledgeButton,
@@ -87,12 +89,17 @@ function Destinations() {
   );
 }
 
-/** The sidebar's last item, the notification bell. A short fade from the
- *  sidebar's colour separates the scrolling session list from it. */
+/** The sidebar's last row: the notification bell, then the account. Both
+ *  are about you rather than the screen in front of you, so they live here
+ *  and not in the title bar. A short fade from the sidebar's colour separates
+ *  the scrolling session list from them. */
 function SidebarFoot() {
   return (
-    <div className="relative flex shrink-0 flex-col items-start px-[8px] pb-2 pt-1 before:pointer-events-none before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-gradient-to-t before:from-sidebar before:to-transparent">
-      <NotificationsButton />
+    <div className="relative flex shrink-0 items-center gap-1 px-[8px] pb-2 pt-1 before:pointer-events-none before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-gradient-to-t before:from-sidebar before:to-transparent">
+      <div className="min-w-0 flex-1">
+        <NotificationsButton />
+      </div>
+      <AccountButton menuSide="top" menuExtra={<HelpSubmenu />} />
     </div>
   );
 }

@@ -10,9 +10,8 @@
 // so there is no loading state; and the pinned TEXT is stored with the pin, so
 // a pin whose message has been rewound off the thread still renders.
 //
-// The jump itself is the panel's (`onJump`): it has to clear the role filter
-// first and resolve the pin against the UNFILTERED list, and only the panel
-// owns both.
+// The jump itself is the panel's (`onJump`): it resolves the pin against the
+// session's messages, which only the panel holds.
 //
 // The trigger renders only when something is pinned. An always-present pin
 // button with a zero next to it is a control that asks to be ignored.
@@ -30,16 +29,11 @@ import { pinsFor, useChatPinsStore, type ChatPin } from "../stores/chat-pins-sto
 export function ChatPinnedMenu({
   pinScopeKey,
   onJump,
-  open,
-  onOpenChange,
 }: {
   pinScopeKey: string;
   onJump: (pin: ChatPin) => void;
-  /** Owned by the caller: the session's ⋯ menu opens this too. */
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
 }) {
-  const setOpen = onOpenChange;
+  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const pins = useChatPinsStore((s) => pinsFor(s, pinScopeKey));
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   clearAgentQuestion,
@@ -12,6 +12,7 @@ import { useDetailPanelStore } from "../stores/detail-panel-store";
 import { sessionScope } from "../lib/session-scope";
 import { useSessionDetailsStore } from "@/features/session-context/stores/session-details-store";
 import { useSessionHeaderSlot } from "../stores/session-header-slot-store";
+import { useSessionSidePanel, useSessionSidePanelStore } from "../stores/session-side-panel-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
 import { agents, ensureAgent, resetAgent } from "../lib/agents-api";
 import { isDeadlineError, progressSince, withDeadline } from "../lib/with-deadline";
@@ -114,7 +115,6 @@ import { AgentUpdateBar } from "./agent-update-bar";
 import { SessionHeaderControls } from "./session-header";
 import { adoptSessionDrawer } from "@/features/terminal/lib/session-drawer";
 import { SessionDockLane } from "./session-dock-lane";
-import { forkSessionToNewTab } from "../lib/fork-session";
 import { projectPathForTab } from "../lib/tab-project";
 import { MemoryUpdatedCard } from "@/features/memory/components/memory-updated-card";
 import { OPEN_TURN_DIFF_EVENT, type TurnDiffRequest } from "../lib/open-turn-diff";
@@ -290,22 +290,10 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   // Narrow subscription — an unanswered `elicitation/create` (P3.3).
   const pendingElicitation = useChatStore((s) => s.sessions[tabId]?.pendingElicitation);
 
-  // P3.4: only offer "branch from here" when the bound agent advertised
-  // `sessionCapabilities.fork`. Gated on data, never on an agent name.
-  const canFork = useChatStore((s) => {
-    const sess = s.sessions[tabId];
-    if (!sess?.acpAgentId || !sess.acpSessionId || !sess.agentType) return false;
-    return agentCatalogEntry(sess.agentType)?.supportsFork === true;
-  });
-
-  /** Fork the bound session and open the branch in a new tab, so the thread
-   *  that got here stays intact — which is the entire point of forking. */
-  // Shared with the composer's `/fork` command — one fork flow, two doors.
-  // 0.3.1's source-project fix for the branch cwd lives inside the helper.
-  const onForkSessionStable = useCallback(() => forkSessionToNewTab(tabId), [tabId]);
-  const [roleFilter, setRoleFilter] = useState<"all" | "user" | "assistant">("all");
-  const [bashPanelOpen, setBashPanelOpen] = useState(false);
-  const [plansPanelOpen, setPlansPanelOpen] = useState(false);
+  // Opened from the Details card's Activity section, so kept by tab in a
+  // store rather than here (`session-side-panel-store.ts`).
+  const sidePanel = useSessionSidePanel(tabId);
+  const { close: closeSidePanel } = useSessionSidePanelStore.use.actions();
   // Narrow boolean — changes only when the detail panel opens or closes.
   const detailOpen = useDetailPanelStore((s) => !!s.targets[tabId]);
   // The session's scope, the key of its Details card and terminal drawer.
@@ -391,19 +379,6 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     setShowJumpToBottom(visible);
     setJumpCount(count ?? 0);
   }, []);
-
-  // The role filter is applied here rather than inside the transcript: the
-  // projection turns a message list into turns and rows, so handing it a
-  // pre-filtered list keeps that pass single-purpose. Identity is preserved in
-  // the (overwhelmingly common) "all" case so the projection memo isn't
-  // invalidated on every render.
-  const filteredMessages = useMemo(
-    () =>
-      roleFilter === "all"
-        ? (session?.messages ?? [])
-        : (session?.messages ?? []).filter((m) => m.role === roleFilter),
-    [session?.messages, roleFilter],
-  );
 
   const acpSessionId = session?.acpSessionId ?? "";
   const memoryWritesSince = acpSessionId ? memorySince(acpSessionId) : 0;
@@ -1061,11 +1036,9 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   // once per streaming frame with ChatPanel: fresh inline closures here would
   // defeat their memo() exactly like they would the composer's.
   const onPermissionSend = useCallback((t: string) => handleSendRef.current?.(t, []), []);
-  const onOpenSearchStable = useCallback(() => setSearchPaletteOpen(true), []);
-  // Same shape as the bash panel's jump: the transcript projects
-  // `filteredMessages`, so the filter must be cleared first and the index
-  // resolved against the FULL list — the transcript picks the jump up once the
-  // unfiltered projection lands (see `scrollToMessage`).
+  // Same shape as the bash panel's jump: the index is resolved against the
+  // session's messages, which the transcript projects as they are (see
+  // `scrollToMessage`).
   const onJumpToPinStable = useCallback(
     (pin: ChatPin) => {
       const messages = useChatStore.getState().sessions[tabId]?.messages ?? [];
@@ -1083,19 +1056,10 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         toast.error("That message is no longer in this thread");
         return;
       }
-      setRoleFilter("all");
       window.dispatchEvent(new CustomEvent("atlas:chat-jump", { detail: { index, tabId } }));
     },
     [tabId],
   );
-  const onToggleBashStable = useCallback(() => {
-    setBashPanelOpen((v) => !v);
-    setPlansPanelOpen(false);
-  }, []);
-  const onTogglePlansStable = useCallback(() => {
-    setPlansPanelOpen((v) => !v);
-    setBashPanelOpen(false);
-  }, []);
   useEffect(() => {
     const cur = session?.status ?? "idle";
     const prev = prevStatusRef.current;
@@ -1565,16 +1529,8 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
               scope={scope}
               docked={contextDock.docked}
               stageRef={stageRef}
-              onOpenSearch={onOpenSearchStable}
-              roleFilter={roleFilter}
-              onRoleFilterChange={setRoleFilter}
               pinScopeKey={pinScopeKey}
               onJumpToPin={onJumpToPinStable}
-              bashPanelOpen={bashPanelOpen}
-              onToggleBash={onToggleBashStable}
-              plansPanelOpen={plansPanelOpen}
-              onTogglePlans={onTogglePlansStable}
-              onForkSession={canFork ? onForkSessionStable : undefined}
             />,
             headerSlot,
           )}
@@ -1609,7 +1565,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
                     ref={messagesListRef}
                     tabId={tabId}
                     acpSessionId={acpSessionId}
-                    messages={filteredMessages}
+                    messages={session.messages}
                     isStreaming={session.status === "running"}
                     turnInProgress={isBusyAgentStatus(session.status)}
                     agentType={session.agentType}
@@ -1690,24 +1646,23 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         </div>
       </div>
 
-      {bashPanelOpen && (
+      {sidePanel === "bash" && (
         <Suspense fallback={null}>
           <BashHistoryPanel
             messages={session.messages}
             onJump={(idx) => {
-              if (roleFilter !== "all") setRoleFilter("all");
               window.dispatchEvent(
                 new CustomEvent("atlas:chat-jump", { detail: { index: idx, tabId } }),
               );
             }}
-            onClose={() => setBashPanelOpen(false)}
+            onClose={() => closeSidePanel(tabId)}
           />
         </Suspense>
       )}
 
-      {plansPanelOpen && (
+      {sidePanel === "plans" && (
         <Suspense fallback={null}>
-          <PlansPanel onClose={() => setPlansPanelOpen(false)} />
+          <PlansPanel onClose={() => closeSidePanel(tabId)} />
         </Suspense>
       )}
 

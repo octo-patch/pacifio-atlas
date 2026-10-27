@@ -467,7 +467,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const [startIndex, setStartIndex] = useState(() => Math.max(0, rows.length - WINDOW_INITIAL));
 
   // A projection that SHRINKS — "New chat" resetting the session in place, a
-  // project switch dropping history, a role filter — leaves `startIndex`
+  // project switch dropping history — leaves `startIndex`
   // pointing into a thread that no longer exists. Every other writer only ever
   // moves the start DOWN (growth, jump-to-message) or sets it to this floor, so
   // a start above the floor is unreachable except by a shrink: that is the
@@ -887,8 +887,8 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   //  * The target row is ALREADY in the window. `setStartIndex` with an
   //    unchanged value schedules no render, so the anchor layout effect never
   //    ran and nothing moved. `jumpTick` exists purely to force that render.
-  //  * The caller has just changed the message list (the pin jump clears the
-  //    role filter first) and dispatched in the same tick, so the projection
+  //  * The caller dispatched in the same tick as a change to the message
+  //    list, so the projection
   //    we hold is the OLD one and the index is not in it yet. The index is
   //    parked in `pendingJumpRef` and retried when the projection changes.
   const pendingJumpRef = useRef<number | null>(null);
