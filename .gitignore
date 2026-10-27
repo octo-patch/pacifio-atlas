@@ -13,7 +13,11 @@ dist-next/
 target/
 
 # IDE
-.vscode/
+# Per-developer editor state stays out; the shared settings and extension
+# recommendations are committed.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
