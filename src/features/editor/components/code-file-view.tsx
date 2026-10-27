@@ -1,3 +1,5 @@
+// Before the editor's first `selectionchange`; see the module.
+import "../lib/composed-ranges-shim";
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   DEFAULT_TOKENIZE_MAX_LENGTH,
