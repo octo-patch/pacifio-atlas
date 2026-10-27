@@ -5,6 +5,7 @@
 //   Version control  branch, pull requests, the git action, what changed
 //   Projects         the folders the session works in
 //   Lineage          the session it branched from, its branches, its agents
+//   Activity         its Bash calls and its plans, as panels
 //
 // Showing it is a toggle and nothing else. It never takes layout space from
 // the transcript or the composer: docked, it is drawn into room the panel
@@ -27,6 +28,7 @@ import {
   type DetailsHeights,
 } from "../lib/details-density";
 import { useSessionWorkPath } from "../lib/session-work-path";
+import { ActivitySection } from "./activity-section";
 import { LineageSection } from "./lineage-section";
 import { ProjectsSection } from "./projects-section";
 import { VersionControlSection } from "./version-control-section";
@@ -130,6 +132,7 @@ export function SessionDetailsCard({
           </p>
         )}
         {density === "full" && <LineageSection tabId={tabId} projectPath={projectPath} />}
+        <ActivitySection tabId={tabId} />
       </div>
     </div>
   );
