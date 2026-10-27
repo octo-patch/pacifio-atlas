@@ -82,10 +82,13 @@ export function DiffCommentAnnotation({
     );
   }
 
+  // Inside an editable file the box sits under the editor's content element,
+  // which hides the native caret and selection (it draws its own); both are
+  // inherited, so the textarea would show neither.
   return (
     <div
       data-diff-comment-annotation="draft"
-      className="px-3 py-2 font-sans"
+      className="px-3 py-2 font-sans caret-foreground selection:bg-primary selection:text-primary-foreground"
       contentEditable={false}
       onPointerDown={stop}
     >
