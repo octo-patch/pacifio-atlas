@@ -84,7 +84,7 @@ export function FileSearch(props: { onClose: () => void; escapeLabel: string }) 
     const timer = window.setTimeout(() => void runSearch(query), query ? DEBOUNCE_MS : 0);
     return () => window.clearTimeout(timer);
     // `runSearch` reads only refs and the project path.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [query, projectPath]);
 
   // The index changed (a file was added or removed, or the first walk
@@ -107,7 +107,7 @@ export function FileSearch(props: { onClose: () => void; escapeLabel: string }) 
       cancelled = true;
       unlisten?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [projectPath]);
 
   const reindex = async () => {

@@ -564,12 +564,6 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
             // these arrays; a throw here used to silently skip ALL seeding.
             const modes = snap.available_modes ?? [];
             const models = snap.available_models ?? [];
-            console.debug("[acp-models] snapshot", {
-              agent: useChatStore.getState().sessions[tabId]?.agentType,
-              models: models.length,
-              current: snap.current_model,
-              modes: modes.length,
-            });
             // Only seed when the agent actually advertised modes, so we never
             // clobber the optimistic cached modes with an empty set.
             if (modes.length > 0) {
@@ -835,10 +829,6 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         });
         if (cancelled) return;
         const models = snap.available_models ?? [];
-        console.debug("[acp-models] backfill", {
-          agent: session?.agentType,
-          models: models.length,
-        });
         if (models.length > 0) {
           useChatStore.getState().actions.setAcpModels(tabId, snap.current_model, models);
         } else {

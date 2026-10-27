@@ -41,7 +41,7 @@ export function UsagePanel() {
   const projectSig = useProjectStore((s) => s.projects.map((p) => p.path).join("|"));
   useEffect(() => {
     void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [projectSig]);
 
   const captureRef = useRef<HTMLDivElement>(null);

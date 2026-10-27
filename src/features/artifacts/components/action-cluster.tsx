@@ -58,7 +58,7 @@ export function ActionCluster({
       )}
     >
       {shown.map((child, i) => (
-        // eslint-disable-next-line react/no-array-index-key
+        // oxlint-disable-next-line react/no-array-index-key
         <span key={i} className="flex items-center">
           {i > 0 && <span aria-hidden className="mr-0.5 h-3 w-px bg-[var(--border)]" />}
           {child}

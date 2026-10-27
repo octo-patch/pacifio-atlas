@@ -59,7 +59,7 @@ export function CommsHome() {
 
   const channels = useMemo(
     () => conversations.filter((c) => c.kind === "channel" && matches(c.name)).sort(byRecency),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [conversations, q],
   );
   const directs = useMemo(
@@ -67,7 +67,7 @@ export function CommsHome() {
       conversations
         .filter((c) => c.kind !== "channel" && matches(conversationTitle(c, members, me)))
         .sort(byRecency),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [conversations, members, me, q],
   );
   // Group conversations and 1:1s are different things wearing the same row —
@@ -87,12 +87,12 @@ export function CommsHome() {
       .filter((m) => m.id !== me && !haveDm.has(m.id))
       .filter((m) => matches(m.name) || matches(m.email))
       .sort((a, b) => a.name.localeCompare(b.name));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [conversations, memberList, me, q]);
 
   const discover = useMemo(
     () => discoverable.filter((c) => matches(c.name)).sort(byRecency),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [discoverable, q],
   );
 

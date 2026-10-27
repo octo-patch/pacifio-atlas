@@ -176,7 +176,7 @@ export function ApprovalCard({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [answer, q, step, goNext, goBack]);
 
   return (

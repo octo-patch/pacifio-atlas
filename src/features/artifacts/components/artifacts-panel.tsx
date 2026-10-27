@@ -428,7 +428,7 @@ export function ArtifactsPanel() {
     } finally {
     }
     // `projectsKey` stands in for `projectPaths`: same content, stable identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [projectsKey, projectFilter, reportCloudFailure, activeOrganisationId]);
 
   // The retry needs `refresh` and is declared above it — see `refreshRef`.
@@ -594,7 +594,7 @@ export function ArtifactsPanel() {
     readDetail(true);
     // `sessions` is read for the opening frame only — re-running this effect on
     // every board refresh would re-paint the shell over a loaded timeline.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [open, readDetail]);
 
   // A live Session keeps growing while it is open — piggyback the detail
@@ -611,7 +611,7 @@ export function ArtifactsPanel() {
     if (sessionState(detail.summary) !== "live") return;
     readDetail(false);
     // `sessions` is the freshest signal that a background refresh landed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions]);
 
   /** The cap was reached, so there is older history the board is not showing. */

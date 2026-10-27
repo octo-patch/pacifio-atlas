@@ -906,14 +906,14 @@ function Body({ text, directory }: { text: string; directory: OrgDirectory }) {
       {parts.map((part, i) =>
         part.mention ? (
           <span
-            // eslint-disable-next-line react/no-array-index-key
+            // oxlint-disable-next-line react/no-array-index-key
             key={i}
             className="rounded bg-[var(--atlas-element-emphasis)] px-1 text-[var(--foreground)]"
           >
             @{directory.byId.get(part.text)?.name ?? part.text}
           </span>
         ) : (
-          // eslint-disable-next-line react/no-array-index-key
+          // oxlint-disable-next-line react/no-array-index-key
           <span key={i}>{part.text}</span>
         ),
       )}
@@ -954,7 +954,7 @@ function Composer({
     if (!editing || !el) return;
     el.setSelectionRange(el.value.length, el.value.length);
     // Mount only: the caret belongs to the person once they start typing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

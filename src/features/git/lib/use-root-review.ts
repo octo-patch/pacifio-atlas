@@ -141,7 +141,7 @@ export function useAttachedRootReviews({
   // list is rebuilt from it. A slot's callbacks are stable within its scope.
   const reviews = useMemo<AttachedRootReview[]>(
     () => active.map((root, i) => ({ root, source: src[i]!, review: slots[i]! })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [rootsKey, src[0], src[1], src[2], src[3], s0.files, s1.files, s2.files, s3.files],
   );
   return {

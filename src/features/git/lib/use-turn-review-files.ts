@@ -79,7 +79,7 @@ export function useSessionEditTurns(
         ? listEditTurns(sessionMessages(useChatStore.getState(), sessionId) ?? [], repoPath)
         : NO_TURNS,
     // `signature` stands for the messages, read here through `getState`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [signature, sessionId, repoPath, enabled],
   );
 }
@@ -115,7 +115,7 @@ export function useTurnEdits(
     previous.current = sources;
     return { ...edits, sources };
     // `signature` stands for the messages, read here through `getState`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, sessionId, turnId, repoPath]);
 }
 
@@ -291,7 +291,7 @@ export function useTurnReviewFiles({
         };
       }),
     // `resultsKey` stands for `results`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [paths, edits, placeholders, resultsKey],
   );
 

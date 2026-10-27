@@ -737,6 +737,20 @@ export const miscHandlers: MockHandlers = {
   // backend" / "not granted", the honest state here.
   notifier_init: nothing,
   notifier_request_authorization: nothing,
+  // Fire-and-forget banners, and the icon cache: no banner is ever shown, so
+  // there is no path to look up and nothing to remove. `null` is the wrappers'
+  // "no cached icon" answer.
+  notifier_show: nothing,
+  notifier_remove: nothing,
+  notifier_remove_group: nothing,
+  notifier_icon_lookup: nothing,
+  notifier_icon_store: nothing,
+
+  // ── quit guard ──────────────────────────────────────────────────────────
+  // Closing a browser tab is not a quit Rust can hold, so `ready` arms
+  // nothing and no `atlas:quit-requested` is ever emitted to answer.
+  quit_guard_ready: nothing,
+  quit_guard_answer: nothing,
   "plugin:window|set_badge_count": nothing,
 
   // ── updater ─────────────────────────────────────────────────────────────
