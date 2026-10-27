@@ -63,6 +63,21 @@ console.log(
   `[with-posthog-env] PostHog key ${embedded ? "embedded from env/.env" : "not set — telemetry inert"}`,
 );
 
+// `tauri dev` is how most people build, and without this nothing ever collects
+// their `target/` (target-gc.sh used to run only from `ci:local`). The script
+// decides for itself whether anything is due (a Rust upgrade, or the weekly
+// sweep), so the usual run costs a couple of process spawns. Best effort: a
+// missing bash, a missing cargo-sweep or a failed collection prints one line
+// and dev starts anyway.
+if (cmd === "tauri" && args[0] === "dev" && process.platform !== "win32") {
+  const gc = spawnSync("bash", [join(root, "scripts", "target-gc.sh"), join(root, "target")], {
+    stdio: "inherit",
+    env,
+    timeout: 120_000,
+  });
+  if (gc.status !== 0) console.log("[with-posthog-env] target-gc skipped or failed; continuing");
+}
+
 // `shell: true` (needed on Windows so `tauri` resolves to `tauri.cmd`) makes
 // Node join the command and arguments with bare spaces for cmd.exe, so a part
 // containing a space — `C:\Program Files\nodejs\node.exe`, the default install

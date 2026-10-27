@@ -140,6 +140,7 @@ export const NON_RUST = [
   "patches/",
   "scripts/",
   ".husky/",
+  ".vscode/",
   ".design-sync/",
   ".github/ISSUE_TEMPLATE/",
   ".github/pr-assets/",
@@ -163,6 +164,7 @@ export const NON_RUST = [
   ".oxlintrc.json",
   ".oxfmtrc.json",
   ".gitignore",
+  ".editorconfig",
   ".env.example",
 ];
 
