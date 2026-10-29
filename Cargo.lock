@@ -735,7 +735,7 @@ dependencies = [
  "objc2-user-notifications",
  "parking_lot",
  "posthog-rs",
- "pulldown-cmark 0.13.5",
+ "pulldown-cmark",
  "reqwest 0.12.28",
  "rig-core",
  "rmcp",
@@ -2934,7 +2934,7 @@ dependencies = [
  "chrono",
  "futures",
  "pretty_assertions",
- "pulldown-cmark 0.10.3",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "sqlx",
@@ -12116,17 +12116,6 @@ checksum = "6f42ea446cab60335f76979ec15e12619a2165b5ae2c12166bef27d283a9fadf"
 dependencies = [
  "idna",
  "psl-types",
-]
-
-[[package]]
-name = "pulldown-cmark"
-version = "0.10.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76979bea66e7875e7509c4ec5300112b316af87fa7a252ca91c448b32dfe3993"
-dependencies = [
- "bitflags 2.13.2",
- "memchr",
- "unicase",
 ]
 
 [[package]]

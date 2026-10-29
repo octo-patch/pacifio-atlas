@@ -455,7 +455,7 @@ portable-pty = "0.9.0"
 predicates = "3"
 pretty_assertions = "1.4.1"
 proptest = "1.11"
-pulldown-cmark = { version = "0.10", default-features = false }
+pulldown-cmark = { version = "0.13", default-features = false }
 quick-xml = "0.41.0"
 rand = "0.9"
 rayon = "1.12"
