@@ -157,7 +157,7 @@ atlas-checkpoint = { path = "../crates/atlas-checkpoint" }
 # In-process code search (ripgrep engine): the `atlas_code` tool server and
 # the project search overlay (`commands::code_server`). Tauri-free.
 atlas-search = { path = "../crates/atlas-search" }
-dirs = "6"
+dirs = "7"
 # `canonicalize` without Windows' `\\?\` verbatim prefix, which would otherwise
 # leak into workspace paths, capture ids and asset scopes. Already in the
 # lockfile via the engine tree, so no new resolution.
