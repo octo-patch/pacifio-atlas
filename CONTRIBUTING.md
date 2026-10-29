@@ -282,7 +282,9 @@ container's cache volume:
   by several worktrees, which churns through dependency versions faster than
   30 days can age them out. `ATLAS_GC_UNUSED_DAYS` and `ATLAS_GC_EVERY_DAYS`
   shorten the two windows above for the same case. The main checkout's
-  `target/` sets none of them.
+  `target/` sets none of them. A `target/` that is a symlink (the shared dir)
+  is only collected by the worktree wrapper, under its build lock, since
+  cargo-sweep takes no lock of its own.
 
 Both use [`cargo-sweep`](https://github.com/holmgr/cargo-sweep), which the
 container image ships with. On your machine, install it once with

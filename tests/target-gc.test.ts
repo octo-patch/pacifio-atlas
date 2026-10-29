@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -60,7 +61,7 @@ function stub(name: string, body: string) {
 
 function run(
   release: string,
-  { sweepInstalled = true, env: extra = {} as Record<string, string> } = {},
+  { sweepInstalled = true, env: extra = {} as Record<string, string>, target: dir_ = target } = {},
 ) {
   stub("rustc", `echo "rustc ${release}"; echo "release: ${release}"`);
   stub("rustup", `echo "${release}-test-toolchain (overridden)"`);
@@ -74,7 +75,7 @@ function run(
       ([key]) => key.toUpperCase() !== "PATH" && !key.startsWith("ATLAS_GC_"),
     ),
   );
-  return execFileSync("bash", [SCRIPT, target], {
+  return execFileSync("bash", [SCRIPT, dir_], {
     encoding: "utf8",
     // Only the stubs and the basics: a real cargo-sweep on this machine must
     // not stand in for the stub the test removed.
@@ -165,7 +166,27 @@ describe("target-gc.sh", () => {
     run("1.99.0");
     run("1.99.0", { env: { ATLAS_GC_MAX_MB: "100" } });
     expect(sweeps().filter((s) => s.includes("--maxsize"))).toEqual([]);
-    run("1.99.0", { env: { ATLAS_GC_MAX_MB: "1" } });
+    expect(existsSync(path.join(target, "debug", "incremental", "atlas_lib-abc"))).toBe(true);
+    // The stub sweep deletes nothing, so the dir is still over afterwards.
+    const out = run("1.99.0", { env: { ATLAS_GC_MAX_MB: "1" } });
     expect(sweeps()).toContain("sweep --maxsize 1 .");
+    expect(existsSync(path.join(target, "debug", "incremental"))).toBe(false);
+    expect(out).toContain("still 3 MB after the sweep");
   });
+
+  // Creating a symlink on Windows needs developer mode or admin rights.
+  it.skipIf(process.platform === "win32")(
+    "measures a symlinked target dir, and sweeps it only under the wrapper's lock",
+    () => {
+      writeFileSync(path.join(target, "debug", "big.rlib"), Buffer.alloc(3 * 1024 * 1024, 1));
+      const link = path.join(dir, "linked-target");
+      symlinkSync(target, link);
+      const env = { ATLAS_GC_MAX_MB: "1" };
+      const out = run("1.99.0", { env, target: link });
+      expect(out).toContain("shared target dir");
+      expect(sweeps()).toEqual([]);
+      run("1.99.0", { env: { ...env, ATLAS_GC_LOCKED: "1" }, target: link });
+      expect(sweeps()).toContain("sweep --maxsize 1 .");
+    },
+  );
 });

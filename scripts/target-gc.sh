@@ -26,8 +26,17 @@
 #      can age them out, so over the cap `cargo sweep --maxsize` removes the
 #      least recently used artifacts until it fits. Unset, nothing is capped.
 #
+#      cargo-sweep counts incremental state toward the size but never removes
+#      it, so over the cap that goes first.
+#
 # ATLAS_GC_UNUSED_DAYS and ATLAS_GC_EVERY_DAYS override the 30 and 7 above;
 # the agent worktrees' shared target dir sets all three, the main checkout none.
+#
+# A target/ that is a symlink is that shared dir, and other worktrees may be
+# building in it. cargo-sweep takes no build lock, so a sweep there could
+# delete artifacts out from under a running build. The worktree wrapper
+# collects it while holding its build lock and says so with ATLAS_GC_LOCKED=1;
+# called any other way (`ci:local` in a worktree), this leaves it alone.
 #
 # cargo-sweep leaves `incremental/` alone (its directories have no
 # fingerprint), so this removes it on an upgrade and ages it out by mtime,
@@ -44,6 +53,10 @@ MAX_MB=${ATLAS_GC_MAX_MB:-}
 
 target=${1:?usage: target-gc.sh <target-dir>}
 [ -d "$target" ] || exit 0
+if [ -L "$target" ] && [ -z "${ATLAS_GC_LOCKED:-}" ]; then
+  echo "target-gc: $target is a shared target dir; the worktree wrapper collects it"
+  exit 0
+fi
 # The repo root, so rustup resolves the toolchain rust-toolchain.toml pins.
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -93,10 +106,15 @@ if $have_sweep && { [ ! -f "$swept" ] || [ -n "$(find "$swept" -mtime +"$SWEEP_E
   touch "$swept"
 fi
 
-if $have_sweep && [ -n "$MAX_MB" ]; then
-  size_mb=$(( $(du -sk "$target" | cut -f1) / 1024 ))
-  if [ "$size_mb" -gt "$MAX_MB" ]; then
-    say "${size_mb} MB is over the ${MAX_MB} MB cap: removing the least recently used"
-    sweep --maxsize "$MAX_MB"
+# The trailing slash makes du measure the directory a symlink points at.
+size_mb() { echo $(( $(du -sk "$target/" | cut -f1) / 1024 )); }
+if $have_sweep && [ -n "$MAX_MB" ] && [ "$(size_mb)" -gt "$MAX_MB" ]; then
+  say "$(size_mb) MB is over the ${MAX_MB} MB cap: removing incremental state and the least recently used artifacts"
+  incremental_dirs | while read -r d; do rm -rf "$d"; done
+  sweep --maxsize "$MAX_MB"
+  # cargo-sweep keeps an artifact bigger than what is left to remove, so it
+  # can stop short. Say so rather than escalate to a wipe.
+  if [ "$(size_mb)" -gt "$MAX_MB" ]; then
+    say "still $(size_mb) MB after the sweep; rm -rf $target/ to start over"
   fi
 fi
