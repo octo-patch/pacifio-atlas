@@ -175,11 +175,12 @@ url = "2"
 #
 # `gzip` + `brotli` so arXiv / Semantic Scholar responses (often
 # gzip-encoded) decode transparently.
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "charset",
     "http2",
-    "rustls-tls",
+    "rustls",
+    "query",
     "gzip",
     "brotli",
     "stream",
