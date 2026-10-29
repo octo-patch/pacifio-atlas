@@ -593,6 +593,40 @@ mod tests {
         );
     }
 
+    /// Golden values computed with ed25519-dalek 2.2 so that a dependency bump
+    /// cannot silently change how stored agent identity keys decode or encode.
+    #[test]
+    fn fixed_seed_key_material_matches_golden_values() -> anyhow::Result<()> {
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let pkcs8 = signing_key.to_pkcs8_der()?;
+        assert_eq!(
+            BASE64_STANDARD.encode(pkcs8.as_bytes()),
+            "MFECAQEwBQYDK2VwBCIEIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHgSEA6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw="
+        );
+        assert_eq!(
+            encode_ssh_ed25519_public_key(&signing_key.verifying_key()),
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIs"
+        );
+        let signature = signing_key.sign(b"golden message");
+        assert_eq!(
+            BASE64_STANDARD.encode(signature.to_bytes()),
+            "seGh36tYhdcnCzIv2vebqSrGeXmI8i8JKLtyxW1ZmwVqogGxS5446jnM8byKGeAMZWhxNk6J8D+6WumAwHrZCQ=="
+        );
+        assert_eq!(
+            BASE64_STANDARD.encode(curve25519_secret_key_from_signing_key(&signing_key).to_bytes()),
+            "KK05/v1/o+IAqcYm7vWZ5hotBVxIqCiKTn5MS8o5KHg="
+        );
+        let decoded =
+            signing_key_from_private_key_pkcs8_base64(&BASE64_STANDARD.encode(pkcs8.as_bytes()))?;
+        assert_eq!(decoded.to_bytes(), [7u8; 32]);
+        // The older PKCS#8 v1 form (no embedded public key) must keep loading too.
+        let v1 = signing_key_from_private_key_pkcs8_base64(
+            "MC4CAQAwBQYDK2VwBCIEIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH",
+        )?;
+        assert_eq!(v1.to_bytes(), [7u8; 32]);
+        Ok(())
+    }
+
     #[test]
     fn authorization_header_for_agent_task_serializes_signed_agent_assertion() {
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
