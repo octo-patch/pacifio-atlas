@@ -166,20 +166,24 @@ sha2 = "0.10"
 # URL parsing for the embedded browser (`commands::browser`). Already in the
 # lockfile transitively via tauri/reqwest; declared here to name the type.
 url = "2"
-# `rustls-tls` (not `native-tls`) + bundled `webpki-roots`. The macOS
-# Security.framework / Keychain code path that `native-tls` uses can fail
+# `rustls` (not `native-tls`): TLS is rustls on aws-lc-rs, with certificates
+# verified by rustls-platform-verifier (reqwest 0.13's default; 0.12's
+# `rustls-tls` used bundled webpki roots). The platform verifier asks the OS to
+# validate the chain (Security.framework trust evaluation on macOS), which is
+# not the keychain handshake path `native-tls` used. That path could fail
 # silently in sandboxed Hardened-Runtime release builds even with
-# `com.apple.security.network.client` set — symptom: every reqwest call
-# returns a TLS handshake error in `.app` form while working fine under
-# `tauri dev`. rustls is self-contained: no OS keychain, no surprises.
+# `com.apple.security.network.client` set: every reqwest call returned a TLS
+# handshake error in `.app` form while working under `tauri dev`. If that
+# symptom ever returns, test a release `.app` first.
 #
 # `gzip` + `brotli` so arXiv / Semantic Scholar responses (often
 # gzip-encoded) decode transparently.
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "charset",
     "http2",
-    "rustls-tls",
+    "rustls",
+    "query",
     "gzip",
     "brotli",
     "stream",

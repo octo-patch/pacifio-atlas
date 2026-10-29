@@ -443,11 +443,11 @@ nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faa
 nucleo-matcher = "0.3"
 once_cell = "1.20.2"
 openssl-sys = "*"
-opentelemetry = "0.31.0"
-opentelemetry-appender-tracing = "0.31.0"
-opentelemetry-otlp = "0.31.0"
-opentelemetry-semantic-conventions = "0.31.0"
-opentelemetry_sdk = "0.31.0"
+opentelemetry = "0.33.1"
+opentelemetry-appender-tracing = "0.33.1"
+opentelemetry-otlp = "0.33.1"
+opentelemetry-semantic-conventions = "0.33.1"
+opentelemetry_sdk = "0.33.1"
 os_info = "3.12.0"
 owo-colors = "4.3.0"
 pathdiff = "0.2"
@@ -472,26 +472,25 @@ rcgen = { version = "0.14.7", default-features = false, features = [
 regex = "1.12.3"
 regex-syntax = "0.8"
 regex-lite = "0.1.8"
-# `default-features = false`: reqwest's default set is `default-tls` + the
-# three below. `default-tls` is native-tls (Security.framework on macOS), which
-# no consumer wants — every engine and Atlas crate asks for `rustls-tls` —
-# yet with both on, any `Client::new()` that never called `.use_rustls_tls()`
-# silently took native-tls. Dropping it removes native-tls, hyper-tls and
-# tokio-native-tls from the graph and puts every client on rustls/ring.
+# `default-features = false`: reqwest 0.13's default set is `default-tls` (an
+# alias for `rustls`) + `charset`, `http2` and `system-proxy`. Spelling the set
+# out keeps every client on one TLS stack and makes the choice visible here:
+# `rustls` is rustls on aws-lc-rs verifying through the OS trust store
+# (rustls-platform-verifier). No consumer wants native-tls, so it stays out of
+# the graph. `query` and `form` are opt-in features since 0.13; each crate that
+# calls `.query(` / `.form(` adds its own.
 # `cookies` stays: atlas-engine-http-client implements `reqwest::cookie::CookieStore`.
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "charset",
     "http2",
     "system-proxy",
     "cookies",
-    "rustls-tls",
+    "rustls",
 ] }
-# NOTE (Sep-03 audit): rmcp, rig-core and posthog-rs are the three crates
-# holding a second reqwest (0.13) tower in the lock, duplicating hyper/h2/
-# http/tower behind it. The collapse runs FORWARD, not back: all three have
-# 0.13 as their floor in every current release, so unification means moving
-# the app AND the engine to 0.13 — a large, cross-cutting change,
-# not a pin. Left as-is deliberately.
+# NOTE: every reqwest user here is on 0.13 except oauth2 5.0.0 (the latest
+# release), which still depends on reqwest 0.12 and so keeps a second hyper /
+# h2 / http / tower stack in the lock. That duplicate goes away when oauth2
+# moves to 0.13; nothing here can unify it.
 rmcp = { version = "=3.0.0", default-features = false }
 runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
 rustix = { version = "1.1.4", features = ["net"] }
@@ -568,7 +567,7 @@ toml = "0.9.5"
 toml_edit = "0.24.0"
 tracing = "0.1.44"
 tracing-appender = "0.2.3"
-tracing-opentelemetry = "0.32.0"
+tracing-opentelemetry = "0.34.0"
 tracing-subscriber = "0.3.22"
 tracing-test = "0.2.5"
 tonic = { version = "0.14.3", default-features = false, features = ["channel", "codegen"] }
