@@ -46,7 +46,7 @@ tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "uns
 # Used to embed KB cover images as `data:` URLs (covers live under the
 # hidden `.atlas/` dir, which the asset protocol won't serve). Pinned to the
 # version already in the lockfile so no new resolution is pulled in.
-base64 = "0.21"
+base64 = "0.23"
 # Allowlist HTML sanitizer (html5ever-based) for the browser reader. Replaces
 # a hand-rolled string-level denylist whose bypass list kept growing —
 # <meta refresh>, <base>, unquoted javascript: hrefs, `</script >` variants.
@@ -157,7 +157,7 @@ atlas-checkpoint = { path = "../crates/atlas-checkpoint" }
 # In-process code search (ripgrep engine): the `atlas_code` tool server and
 # the project search overlay (`commands::code_server`). Tauri-free.
 atlas-search = { path = "../crates/atlas-search" }
-dirs = "6"
+dirs = "7"
 # `canonicalize` without Windows' `\\?\` verbatim prefix, which would otherwise
 # leak into workspace paths, capture ids and asset scopes. Already in the
 # lockfile via the engine tree, so no new resolution.
@@ -253,9 +253,9 @@ keyring = { workspace = true, features = ["windows-native"] }
 # relaunches from (and only upgrades) the MSI's `InstallLocation`. See
 # `crate::commands::updater`. Already in the tree transitively.
 winreg = "0.55"
-# Native toasts (`crate::notifier::toast`). 0.61 is the version
+# Native toasts (`crate::notifier::toast`). 0.62 is the version
 # `tauri-winrt-notification` already resolves, so no second `windows` major.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Data_Xml_Dom",
   "Foundation",
   "Foundation_Collections",

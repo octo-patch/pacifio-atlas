@@ -361,7 +361,7 @@ aws-credential-types = "1"
 aws-sigv4 = "1"
 aws-types = "1"
 axum = { version = "0.8", default-features = false }
-base64 = "0.22.1"
+base64 = "0.23"
 bitflags = "2.13.1"
 blake3 = "1.8"
 bm25 = "2.3.2"
@@ -387,7 +387,7 @@ ctor = "0.6.3"
 deno_core_icudata = "0.77.0"
 derive_more = "2"
 diffy = "0.4.2"
-dirs = "6"
+dirs = "7"
 divan = "0.1.21"
 dns-lookup = "3.0.1"
 dotenvy = "0.15.7"
@@ -398,7 +398,7 @@ eventsource-stream = "0.2.3"
 flate2 = "1.1.8"
 futures = { version = "0.3", default-features = false }
 gethostname = "1.1.0"
-gix = { version = "0.83.0", default-features = false, features = ["sha1"] }
+gix = { version = "0.90", default-features = false, features = ["sha1"] }
 glob = "0.3"
 globset = "0.4"
 grep-matcher = "0.1.9"
@@ -455,7 +455,7 @@ portable-pty = "0.9.0"
 predicates = "3"
 pretty_assertions = "1.4.1"
 proptest = "1.11"
-pulldown-cmark = { version = "0.10", default-features = false }
+pulldown-cmark = { version = "0.13", default-features = false }
 quick-xml = "0.41.0"
 rand = "0.9"
 rayon = "1.12"
@@ -542,7 +542,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "uuid",
 ] }
 starlark = { version = "0.14.2", default-features = false }
-strum = "0.27.2"
+strum = "0.28"
 strum_macros = "0.28.0"
 supports-color = "3.0.2"
 syntect = "5"
@@ -580,7 +580,7 @@ tonic-prost = "0.14.3"
 # need one: grammar crates bind to the `tree-sitter-language` shim rather than
 # to the core, which is exactly what lets one core serve grammars of several
 # vintages (Atlas's own are 0.23).
-tree-sitter = "0.26"
+tree-sitter = "0.27"
 tree-sitter-bash = "0.25"
 ts-rs = "11"
 tungstenite = { version = "0.27.0", features = ["deflate", "proxy"] }
@@ -598,7 +598,7 @@ which = "8"
 whoami = "1.6.1"
 wildmatch = "2.6.1"
 winapi-util = "0.1.11"
-zip = "2.6.1"
+zip = "9.1"
 zstd = "0.13"
 
 wiremock = "0.6"
