@@ -46,7 +46,7 @@ tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "uns
 # Used to embed KB cover images as `data:` URLs (covers live under the
 # hidden `.atlas/` dir, which the asset protocol won't serve). Pinned to the
 # version already in the lockfile so no new resolution is pulled in.
-base64 = "0.21"
+base64 = "0.23"
 # Allowlist HTML sanitizer (html5ever-based) for the browser reader. Replaces
 # a hand-rolled string-level denylist whose bypass list kept growing —
 # <meta refresh>, <base>, unquoted javascript: hrefs, `</script >` variants.

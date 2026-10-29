@@ -46,7 +46,7 @@ tracing = "0.1"
 # No longer optional. These sat behind the `ported-engine` feature so the previous native
 # path could keep shipping while the engine was proved; that path is gone (#54),
 # so gating them would gate the whole crate.
-base64 = { version = "0.22" }
+base64 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml = { version = "0.9" }
 # For the gateway-dialect surfaces the seam re-exports (the org source).
