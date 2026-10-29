@@ -58,21 +58,27 @@ function stub(name: string, body: string) {
   chmodSync(p, 0o755);
 }
 
-function run(release: string, { sweepInstalled = true } = {}) {
+function run(
+  release: string,
+  { sweepInstalled = true, env: extra = {} as Record<string, string> } = {},
+) {
   stub("rustc", `echo "rustc ${release}"; echo "release: ${release}"`);
   stub("rustup", `echo "${release}-test-toolchain (overridden)"`);
   stub("cargo", `echo "$*" >> "${log}"; echo "[INFO] Cleaned 1 GiB"`);
   if (sweepInstalled) stub("cargo-sweep", "exit 0");
   else rmSync(path.join(bin, "cargo-sweep"), { force: true });
   // Windows spells it `Path`; drop every spelling so ours is the only one.
+  // The ATLAS_GC_* knobs too, so a developer's own settings can't leak in.
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PATH"),
+    Object.entries(process.env).filter(
+      ([key]) => key.toUpperCase() !== "PATH" && !key.startsWith("ATLAS_GC_"),
+    ),
   );
   return execFileSync("bash", [SCRIPT, target], {
     encoding: "utf8",
     // Only the stubs and the basics: a real cargo-sweep on this machine must
     // not stand in for the stub the test removed.
-    env: { ...env, PATH: [bin, ...BASICS].join(path.delimiter) },
+    env: { ...env, ...extra, PATH: [bin, ...BASICS].join(path.delimiter) },
   });
 }
 
@@ -143,5 +149,23 @@ describe("target-gc.sh", () => {
     run("1.99.0");
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(path.join(target, "debug", "incremental", "atlas_lib-abc"))).toBe(true);
+  });
+
+  it("takes the ages from ATLAS_GC_UNUSED_DAYS and ATLAS_GC_EVERY_DAYS", () => {
+    const env = { ATLAS_GC_UNUSED_DAYS: "3", ATLAS_GC_EVERY_DAYS: "1" };
+    run("1.99.0", { env });
+    expect(sweeps()).toContain("sweep --time 3 .");
+    daysAgo(path.join(target, ".atlas-gc-swept"), 2);
+    run("1.99.0", { env });
+    expect(sweeps().filter((s) => s.includes("--time 3"))).toHaveLength(2);
+  });
+
+  it("caps the size only when ATLAS_GC_MAX_MB is set and exceeded", () => {
+    writeFileSync(path.join(target, "debug", "big.rlib"), Buffer.alloc(3 * 1024 * 1024, 1));
+    run("1.99.0");
+    run("1.99.0", { env: { ATLAS_GC_MAX_MB: "100" } });
+    expect(sweeps().filter((s) => s.includes("--maxsize"))).toEqual([]);
+    run("1.99.0", { env: { ATLAS_GC_MAX_MB: "1" } });
+    expect(sweeps()).toContain("sweep --maxsize 1 .");
   });
 });

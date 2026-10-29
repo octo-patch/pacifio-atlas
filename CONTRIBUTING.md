@@ -277,6 +277,12 @@ container's cache volume:
 - **Once a week**, it removes artifacts cargo hasn't used in 30 days: mostly
   old dependency versions left behind by lockfile bumps. Getting one wrong
   costs a rebuild, never a broken build.
+- **Over a size cap**, only when `ATLAS_GC_MAX_MB` is set: it removes the
+  least recently used artifacts until the dir fits. For a target dir shared
+  by several worktrees, which churns through dependency versions faster than
+  30 days can age them out. `ATLAS_GC_UNUSED_DAYS` and `ATLAS_GC_EVERY_DAYS`
+  shorten the two windows above for the same case. The main checkout's
+  `target/` sets none of them.
 
 Both use [`cargo-sweep`](https://github.com/holmgr/cargo-sweep), which the
 container image ships with. On your machine, install it once with

@@ -21,6 +21,13 @@
 #      read in 30 days. Cargo reads a crate's fingerprint every time it checks
 #      the crate is fresh, so its access time is a real "last used". The cost
 #      of a wrong call is a rebuild, never a broken build.
+#   3. Size, only when ATLAS_GC_MAX_MB is set. A target dir shared by many
+#      worktrees churns through dependency bumps faster than a 30-day window
+#      can age them out, so over the cap `cargo sweep --maxsize` removes the
+#      least recently used artifacts until it fits. Unset, nothing is capped.
+#
+# ATLAS_GC_UNUSED_DAYS and ATLAS_GC_EVERY_DAYS override the 30 and 7 above;
+# the agent worktrees' shared target dir sets all three, the main checkout none.
 #
 # cargo-sweep leaves `incremental/` alone (its directories have no
 # fingerprint), so this removes it on an upgrade and ages it out by mtime,
@@ -31,8 +38,9 @@
 # still clears incremental state and the rest prints the install hint once.
 set -euo pipefail
 
-UNUSED_DAYS=30
-SWEEP_EVERY_DAYS=7
+UNUSED_DAYS=${ATLAS_GC_UNUSED_DAYS:-30}
+SWEEP_EVERY_DAYS=${ATLAS_GC_EVERY_DAYS:-7}
+MAX_MB=${ATLAS_GC_MAX_MB:-}
 
 target=${1:?usage: target-gc.sh <target-dir>}
 [ -d "$target" ] || exit 0
@@ -83,4 +91,12 @@ if $have_sweep && { [ ! -f "$swept" ] || [ -n "$(find "$swept" -mtime +"$SWEEP_E
     find "$d" -mindepth 1 -maxdepth 1 -type d -mtime +"$UNUSED_DAYS" -exec rm -rf {} +
   done
   touch "$swept"
+fi
+
+if $have_sweep && [ -n "$MAX_MB" ]; then
+  size_mb=$(( $(du -sk "$target" | cut -f1) / 1024 ))
+  if [ "$size_mb" -gt "$MAX_MB" ]; then
+    say "${size_mb} MB is over the ${MAX_MB} MB cap: removing the least recently used"
+    sweep --maxsize "$MAX_MB"
+  fi
 fi
