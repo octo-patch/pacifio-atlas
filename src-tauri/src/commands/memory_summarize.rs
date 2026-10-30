@@ -91,5 +91,8 @@ async fn collect_text(mut stream: Streamed<Completion>) -> Result<String, String
             buf.push_str(&text);
         }
     }
+    // A reply cut before the provider's terminal record is `Truncated` here;
+    // fail so `summarize` falls back to raw text instead of a partial summary.
+    stream.finish().await.map_err(|e| e.to_string())?;
     Ok(buf)
 }

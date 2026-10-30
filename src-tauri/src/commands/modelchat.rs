@@ -264,11 +264,9 @@ async fn drain(
     stream_id: &str,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(u64, u64), String> {
-    let mut input_tokens = 0u64;
-    let mut output_tokens = 0u64;
     while let Some(item) = stream.next().await {
         if cancel.load(Ordering::Relaxed) {
-            return Ok((input_tokens, output_tokens));
+            return Ok((0, 0));
         }
         if let Item::Event(StreamEvent::Text { text, .. }) = item.map_err(|e| e.to_string())? {
             if !text.is_empty() {
@@ -276,12 +274,15 @@ async fn drain(
             }
         }
     }
-    // The stream is fully read: its folded response carries the usage.
-    if let Ok(response) = stream.finish().await {
-        input_tokens = response.usage.input_tokens.unwrap_or(0);
-        output_tokens = response.usage.output_tokens.unwrap_or(0);
-    }
-    Ok((input_tokens, output_tokens))
+    // The stream is fully read: its folded response carries the usage. A reply
+    // the provider never ended (connection cut before the terminal record)
+    // fails here as `Truncated` rather than as a stream item, so it must surface
+    // as an error, not as `Done` after partial text.
+    let response = stream.finish().await.map_err(|e| e.to_string())?;
+    Ok((
+        response.usage.input_tokens.unwrap_or(0),
+        response.usage.output_tokens.unwrap_or(0),
+    ))
 }
 
 // ── Stream command ──────────────────────────────────────────────────────────
