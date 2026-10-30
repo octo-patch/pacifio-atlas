@@ -969,7 +969,7 @@ function ExportAgentsModal({
       alive = false;
     };
     // `key` stands for `ids`: a new array each render must not re-run this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectPath, key]);
 
   const write = async () => {
@@ -990,7 +990,7 @@ function ExportAgentsModal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <DialogOverlay className="backdrop-blur-sm" />
+        <DialogOverlay blur />
         <Dialog.Popup
           aria-describedby={undefined}
           className={cn(
@@ -1121,7 +1121,7 @@ function ImportRepoModal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <DialogOverlay className="backdrop-blur-sm" />
+        <DialogOverlay blur />
         <Dialog.Popup
           aria-describedby={undefined}
           className={cn(
@@ -1271,7 +1271,7 @@ function ImportClaudeMemoryModal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <DialogOverlay className="backdrop-blur-sm" />
+        <DialogOverlay blur />
         <Dialog.Popup
           aria-describedby={undefined}
           className={cn(

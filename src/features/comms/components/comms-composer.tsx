@@ -39,11 +39,11 @@ import { toPlainText } from "../lib/to-plain-text";
 import { CHAT_BODY_MAX_BYTES, CHAT_MESSAGE_ATTACHMENT_MAX } from "../types";
 import type { CommsMessage, OrgMemberProfile } from "../types";
 
-// Start the CodeMirror chunk downloading as soon as this module evaluates,
-// but keep it a DYNAMIC import: a static one would put the 360 KB
-// `vendor-codemirror` chunk in the comms panel's own chunk, so opening team
-// chat would block on it. The agent composer does exactly this for the same
-// reason (`chat/components/message-input.tsx`). One promise, shared by every
+// Start the editor chunk downloading as soon as this module evaluates, but
+// keep it a DYNAMIC import: a static one would put Tiptap and ProseMirror in
+// the comms panel's own chunk, so opening team chat would block on them. The
+// session composer does exactly this for the same reason
+// (`chat/components/message-input.tsx`). One promise, shared by every
 // composer instance.
 const composerInputPromise: Promise<typeof import("./composer-input")> = import("./composer-input");
 
@@ -83,9 +83,9 @@ const EMPTY_COMPOSER = {
  *
  * Built on the agent composer's two-layer card (`chat/components/message-input.tsx`):
  * a muted outer shell whose exposed bottom strip *is* the toolbar, and an inner
- * input surface that owns the focus ring. It keeps a plain `<textarea>` rather
- * than the agent's CodeMirror — that exists to host mention *chips inside the
- * document*, whereas a chat body is plain text carrying `<@id>` tokens.
+ * input surface that owns the focus ring, and on the same editor core
+ * (`components/composer/`). The body stays plain text carrying `<@id>`
+ * tokens; the editor only paints them as pills (`composer-input.tsx`).
  *
  * Two limits are contract-driven, not taste: the body cap is counted in UTF-8
  * BYTES (emoji and CJK cost 3–4×, and a character counter would let someone
@@ -180,6 +180,23 @@ export function CommsComposer({
     return false;
   };
 
+  // A wall of text (a log, a whole file) goes up as a file rather than into
+  // the body, where it would blow the byte cap and every later keystroke
+  // would pay for its layout. Same scratch path as a pasted screenshot.
+  const handlePasteLargeText = (text: string): boolean => {
+    const lines = text.split("\n").length;
+    const file = new File([text], `pasted-text-${lines}-lines-${Date.now()}.txt`, {
+      type: "text/plain",
+    });
+    void scratchPathForFile(file)
+      .then((path) => actions.attachFiles(convId, [path]))
+      .catch((err) => {
+        console.warn("comms: large paste failed:", err);
+        toast.error(typeof err === "string" ? err : "Could not attach that paste.");
+      });
+    return true;
+  };
+
   // Focus on conversation switch and when an edit or reply is started.
   useEffect(() => {
     input.current?.focus();
@@ -244,12 +261,7 @@ export function CommsComposer({
   };
 
   /**
-   * Returns true when the key was consumed. CodeMirror asks before applying
-   * any binding of its own, which is what lets the mention picker keep Enter,
-   * Tab and the arrows.
-   */
-  /**
-   * Returns true when the key was consumed. CodeMirror asks before applying
+   * Returns true when the key was consumed. The editor asks before applying
    * any binding of its own, which is what lets the mention picker keep Enter,
    * Tab and the arrows.
    */
@@ -313,57 +325,56 @@ export function CommsComposer({
 
   return (
     <div className="relative shrink-0 px-2 pb-2 pt-1">
-      {mentionQuery &&
-        matches.length > 0 && (
-          // The house mention-picker shell (`src/features/mentions`): opaque
-          // black, NOT frosted — a backdrop blur here re-blends against the
-          // composer and glitches with the caret — plus the keycap footer, so
-          // the two pickers in the app read as one component.
-          <div
-            className={cn(
-              "absolute bottom-full left-2 right-2 z-popover mb-1 flex flex-col overflow-hidden rounded-lg",
-              "border border-border bg-popover",
-              "shadow-lg inset-highlight",
-            )}
-            // Selecting with the mouse must not blur the textarea first.
-            onMouseDown={(e) => e.preventDefault()}
-          >
-            {/* No section header and no email line: one kind of thing is
+      {mentionQuery && matches.length > 0 && (
+        // The house mention-picker shell (`src/features/mentions`): opaque
+        // black, NOT frosted — a backdrop blur here re-blends against the
+        // composer and glitches with the caret — plus the keycap footer, so
+        // the two pickers in the app read as one component.
+        <div
+          className={cn(
+            "absolute bottom-full left-2 right-2 z-popover mb-1 flex flex-col overflow-hidden rounded-lg",
+            "border border-border bg-popover",
+            "shadow-lg inset-highlight",
+          )}
+          // Selecting with the mouse must not blur the editor first.
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {/* No section header and no email line: one kind of thing is
                 listed here and the name is what gets typed, so both were
                 furniture in a popup that sits over the conversation. */}
-            <div className="max-h-[180px] flex-1 overflow-y-auto hide-scrollbar py-1">
-              {matches.map((m, i) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onMouseEnter={() => setHighlighted(i)}
-                  onClick={() => insertMention(m)}
-                  className={cn(
-                    "flex h-control-md w-full items-center gap-1.5 px-2 text-left transition-colors cursor-pointer",
-                    i === highlighted
-                      ? "bg-[var(--atlas-element-selected)]"
-                      : "hover:bg-[var(--atlas-element-hover)]",
-                  )}
-                >
-                  <CommsAvatar member={m} size={16} />
-                  <span className="min-w-0 flex-1 truncate text-xs text-foreground">{m.name}</span>
-                </button>
-              ))}
-            </div>
-            <div className="flex h-control-md shrink-0 items-center justify-between border-t border-border px-2">
-              <span className="flex items-center gap-1.5 text-3xs text-muted-foreground">
-                <Kbd>↑↓</Kbd>
-                <span>navigate</span>
-                <Kbd>↵</Kbd>
-                <span>select</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-3xs text-muted-foreground">
-                <Kbd>esc</Kbd>
-                <span>close</span>
-              </span>
-            </div>
+          <div className="max-h-[180px] flex-1 overflow-y-auto hide-scrollbar py-1">
+            {matches.map((m, i) => (
+              <button
+                key={m.id}
+                type="button"
+                onMouseEnter={() => setHighlighted(i)}
+                onClick={() => insertMention(m)}
+                className={cn(
+                  "flex h-control-md w-full items-center gap-1.5 px-2 text-left transition-colors cursor-pointer",
+                  i === highlighted
+                    ? "bg-[var(--atlas-element-selected)]"
+                    : "hover:bg-[var(--atlas-element-hover)]",
+                )}
+              >
+                <CommsAvatar member={m} size={16} />
+                <span className="min-w-0 flex-1 truncate text-xs text-foreground">{m.name}</span>
+              </button>
+            ))}
           </div>
-        )}
+          <div className="flex h-control-md shrink-0 items-center justify-between border-t border-border px-2">
+            <span className="flex items-center gap-1.5 text-3xs text-muted-foreground">
+              <Kbd>↑↓</Kbd>
+              <span>navigate</span>
+              <Kbd>↵</Kbd>
+              <span>select</span>
+            </span>
+            <span className="flex items-center gap-1.5 text-3xs text-muted-foreground">
+              <Kbd>esc</Kbd>
+              <span>close</span>
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* The reply/edit strip, TUCKED into the top of the composer rather than
           floating above it — the same construction as the agent composer's AI
@@ -463,6 +474,7 @@ export function CommsComposer({
                   onChange={handleChange}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
+                  onPasteLargeText={handlePasteLargeText}
                 />
               ) : (
                 // Same geometry, so the composer does not resize when the real
@@ -473,7 +485,7 @@ export function CommsComposer({
               )}
             </div>
             {/* Inline send, pinned top-right — the agent composer's placement, so
-              it stays put as the textarea grows downward. */}
+              it stays put as the editor grows downward. */}
             <HintItem
               label={editing ? "Save edit" : uploading ? "Waiting for uploads…" : "Send"}
               className="absolute right-[4px] top-[4px]"
@@ -605,7 +617,7 @@ function Divider() {
 /**
  * A formatting button.
  *
- * `onMouseDown` preventDefault is load-bearing: without it the textarea loses
+ * `onMouseDown` preventDefault is load-bearing: without it the editor loses
  * its selection the moment the button takes focus, and every wrap would apply
  * to an empty range.
  */
