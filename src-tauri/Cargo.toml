@@ -227,7 +227,7 @@ dotenvy = "0.15"
 # remote-config value vs the running `CARGO_PKG_VERSION`). See
 # `crate::commands::updater`.
 semver = "1"
-posthog-rs = "0.14"
+posthog-rs = "0.30"
 # The memory tool server (`commands::memory_server`): MCP over streamable HTTP
 # on loopback. Both crates are already linked into this binary through the
 # engine (`atlas-engine-rmcp-client` enables exactly these rmcp
