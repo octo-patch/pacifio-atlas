@@ -60,6 +60,9 @@ atlas-engine-utils-json-to-toml = { path = "../../vendor/atlas-engine/utils/json
 atlas-engine-core = { path = "../../vendor/atlas-engine/core" }
 atlas-engine-exec-server = { path = "../../vendor/atlas-engine/exec-server" }
 atlas-engine-feedback = { path = "../../vendor/atlas-engine/feedback" }
+# Re-exported (`ensure_credential_store`) so the app installs the same OS credential store
+# the engine uses; the app cannot name an engine crate itself.
+atlas-engine-keyring-store = { workspace = true }
 atlas-engine-login = { path = "../../vendor/atlas-engine/login" }
 # For the engine's bundled base prompt, which the authored catalogue (D3) uses as
 # every row's `instructions_template`.

@@ -424,7 +424,25 @@ jsonwebtoken = { version = "11.1.0", default-features = false, features = [
     "use_pem",
     "aws_lc_rs",
 ] }
-keyring = { version = "3.6", default-features = false }
+# The credential-store API (keyring 3 was split: this is the API, the platform
+# stores below are the implementations; keyring 4 is a sample CLI, not a library).
+# Nothing may make an `Entry` before a store is installed; that is
+# `atlas_engine_keyring_store::ensure_default_store`.
+keyring-core = "1"
+# macOS: the legacy "User" (login) keychain, which is what keyring 3's
+# `apple-native` used. Not `protected`: that is the data-protection keychain, a
+# different store.
+apple-native-keyring-store = { version = "1", default-features = false, features = [
+    "keychain",
+] }
+# Windows Credential Manager. Default config is keyring 3's: target name
+# `user.service`, Enterprise persistence, UTF-16LE blob. No `search` (regex).
+windows-native-keyring-store = { version = "1", default-features = false }
+# Linux: the Secret Service over zbus, as keyring 3's `linux-native-async-persistent`
+# actually resolved to (its default builder only ever built Secret Service entries).
+zbus-secret-service-keyring-store = { version = "1", features = [
+    "rt-async-io-crypto-rust",
+] }
 landlock = "0.4.4"
 lazy_static = "1"
 libc = "0.2.182"
