@@ -500,7 +500,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 rustls-native-certs = "0.8.3"
 rustls-pki-types = "1.14.0"
-schemars = "0.8.22"
+schemars = "1"
 seccompiler = "0.5.0"
 semver = "1.0"
 # Types only. The full `sentry` client (transport, panic hooks, its own HTTP
@@ -581,7 +581,7 @@ tonic-prost = "0.14.3"
 # vintages (Atlas's own are 0.23).
 tree-sitter = "0.27"
 tree-sitter-bash = "0.25"
-ts-rs = "11"
+ts-rs = "12"
 tungstenite = { version = "0.27.0", features = ["deflate", "proxy"] }
 uds_windows = "1.1.0"
 unicode-segmentation = "1.12.0"
