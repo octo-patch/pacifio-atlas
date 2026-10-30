@@ -218,7 +218,10 @@ mimalloc = { version = "0.1", default-features = false }
 # notes to HTML (single-note export, workspace export, and the standalone
 # server crate template).
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-rig-core = "0.38.1"
+# 0.45 ships no HTTP transport unless `reqwest` is on (rustls via default features);
+# the agent runtime moved to the separate `rig-agent` crate, which Atlas does not
+# use — modelchat / memory_summarize drive `Model::stream` directly.
+rig-core = { version = "0.45.0", features = ["reqwest"] }
 # Loads a `.env` (cwd) at startup so source / fork builds can point telemetry at
 # their own PostHog OSS project via `POSTHOG_KEY`/`POSTHOG_HOST` without a
 # rebuild. Tiny, zero transitive deps. See `crate::telemetry`.
