@@ -256,8 +256,8 @@ pub(super) fn start_stream(
 
 // ── Stream drain (shared across providers) ──────────────────────────────────
 
-/// Iterate a Rig multi-turn stream, forwarding text deltas to the UI and
-/// capturing token usage. Generic over the provider response `R`.
+/// Iterate a Rig completion stream, forwarding text deltas to the UI, then read
+/// token usage from the folded response once the stream is exhausted.
 async fn drain(
     mut stream: Streamed<Completion>,
     app: &AppHandle,
