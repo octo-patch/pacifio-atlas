@@ -335,7 +335,13 @@ export const CommsConversation = memo(function CommsConversation({
               onScroll={onScroll}
               className="min-h-0 flex-1 overflow-y-auto hide-scrollbar [overflow-anchor:none]"
             >
-              <div ref={content} style={{ paddingTop: TOP_FADE / 2, paddingBottom: 10 }}>
+              {/* `px-4`: the column's gutter, so avatars, date rules and call
+                  rows sit off the pane's edge rather than against it. */}
+              <div
+                ref={content}
+                className="px-4"
+                style={{ paddingTop: TOP_FADE / 2, paddingBottom: 10 }}
+              >
                 {messages.length === 0 && (loading || (!hydrated && !loadError)) ? (
                   <TranscriptSkeleton />
                 ) : messages.length === 0 && loadError ? (
