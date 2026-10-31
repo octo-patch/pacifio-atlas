@@ -28,7 +28,8 @@ import { useChatPinsStore } from "../stores/chat-pins-store";
 import { useRowHasComments } from "./chat-comment-pills";
 import {
   ActionButton,
-  CommentAndCopy,
+  CommentAction,
+  CopyAction,
   FOOTER_REVEAL,
   MessageTimestamp,
   PinToggle,
@@ -104,14 +105,10 @@ export function ProseRowActions({
               </ActionButton>
             ) : action === "pin" ? (
               <PinToggle key={action} label="Pin response" pinned={pinned} onToggle={onPin} />
+            ) : action === "comment" ? (
+              <CommentAction key={action} tabId={tabId} messageId={messageId} />
             ) : (
-              <CommentAndCopy
-                key={action}
-                tabId={tabId}
-                messageId={messageId}
-                text={text}
-                label="Copy response"
-              />
+              <CopyAction key={action} text={text} label="Copy response" />
             ),
           )}
         </div>

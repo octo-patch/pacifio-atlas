@@ -19,13 +19,13 @@
 //  - "Edit and send as new message" goes in the menu. A response has nothing
 //    rare left, so it has no menu at all.
 //
-// The comment button is not listed: it shares a surround with copy and appears
-// only when the message has a cloud anchor (`CommentAndCopy`), which is a
-// store fact the row resolves itself.
+//  - Comment is inline, LAST — at the bar's right end, beside the "…" — on
+//    its own, not grouped with copy. It draws only when the message has a
+//    cloud anchor (`CommentAction`), a store fact the row resolves itself.
 
 import { RowKind, type Row } from "./turn-rows";
 
-export type MessageAction = "retry" | "copy" | "branch" | "pin" | "edit";
+export type MessageAction = "retry" | "copy" | "branch" | "pin" | "comment" | "edit";
 
 export interface MessageFooterActions {
   /** Icon buttons, in render order. */
@@ -41,7 +41,7 @@ export function userFooterActions({
   canRetry: boolean;
 }): MessageFooterActions {
   return {
-    inline: canRetry ? ["retry", "pin", "copy"] : ["pin", "copy"],
+    inline: canRetry ? ["retry", "pin", "copy", "comment"] : ["pin", "copy", "comment"],
     overflow: ["edit"],
   };
 }
@@ -54,7 +54,10 @@ export function responseFooterActions({
    *  so the latest response is the only row "branch from here" is true of. */
   canBranch: boolean;
 }): MessageFooterActions {
-  return { inline: canBranch ? ["copy", "branch", "pin"] : ["copy", "pin"], overflow: [] };
+  return {
+    inline: canBranch ? ["copy", "branch", "pin", "comment"] : ["copy", "pin", "comment"],
+    overflow: [],
+  };
 }
 
 /**

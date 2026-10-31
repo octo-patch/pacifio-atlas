@@ -78,7 +78,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CopyGlyph } from "@/ui/animated-icon";
-import { CornerUpRight, MessageSquare, MoreHorizontal, Pin, RefreshCw } from "lucide-react";
+import { CornerUpRight, MoreHorizontal, Pin, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
@@ -93,7 +93,14 @@ import {
 import { retryLastTurn } from "../lib/retry-turn";
 import { userFooterActions } from "../lib/message-footer";
 import { useChatPinsStore } from "../stores/chat-pins-store";
-import { useAnchorHit, useChatCommentsStore } from "../stores/chat-comments-store";
+import { CommentButton } from "@/features/artifacts/components/comment-thread";
+import {
+  useAnchorHit,
+  useCommentActions,
+  useCommentBucket,
+  useCommentDirectory,
+  useThreadOpenSignal,
+} from "../stores/chat-comments-store";
 import { useRowHasComments } from "./chat-comment-pills";
 
 /**
@@ -320,40 +327,43 @@ export function useCopy(text: string): { copied: boolean; onCopy: () => void } {
   return { copied, onCopy };
 }
 
-/**
- * Comment and copy. Comment starts a thread about the whole message, under
- * it (`inline-comment-threads.tsx`) — the same place a click on the prose
- * or the selection pill's Comment goes. Drawn once the row is in the anchor
- * map: a captured row of a shared session.
- */
-export function CommentAndCopy({
-  tabId,
-  messageId,
-  text,
-  label,
-}: {
-  tabId: string;
-  messageId: string;
-  text: string;
-  label: string;
-}) {
+/** Copy the message. */
+export function CopyAction({ text, label }: { text: string; label: string }) {
   const { copied, onCopy } = useCopy(text);
-  const anchor = useAnchorHit(tabId, messageId);
-  const onComment = useCallback(
-    () => useChatCommentsStore.getState().actions.startCompose(tabId, messageId, null),
-    [tabId, messageId],
-  );
   return (
-    <>
-      {anchor && (
-        <ActionButton label="Comment" onClick={onComment}>
-          <MessageSquare size={12} />
-        </ActionButton>
-      )}
-      <ActionButton label={label} onClick={onCopy}>
-        <CopyGlyph copied={copied} size="sm" />
-      </ActionButton>
-    </>
+    <ActionButton label={label} onClick={onCopy}>
+      <CopyGlyph copied={copied} size="sm" />
+    </ActionButton>
+  );
+}
+
+/**
+ * The message's comment button, on its own at the bar's right end. Its thread
+ * (read, reply, resolve, start one) opens in the Timeline's popover, hung off
+ * it — not in the transcript. With a discussion it shows the commenters'
+ * faces and count, and the bar stays visible (`discussed`). Drawn only when
+ * the message has a cloud anchor: a captured row of a shared session.
+ */
+export function CommentAction({ tabId, messageId }: { tabId: string; messageId: string }) {
+  const anchor = useAnchorHit(tabId, messageId);
+  // The comments popup (or a jump to a comment) asked for this row's thread:
+  // open it.
+  const openSignal = useThreadOpenSignal(tabId, anchor?.rowId);
+  const comments = useCommentBucket(tabId, messageId);
+  const commentActions = useCommentActions(tabId);
+  const directory = useCommentDirectory(tabId);
+  if (!anchor || !commentActions || !directory) return null;
+  return (
+    <CommentButton
+      bare
+      className="transition-none"
+      openSignal={openSignal}
+      anchorKind={anchor.anchorKind}
+      anchorId={anchor.rowId}
+      comments={comments}
+      actions={commentActions}
+      directory={directory}
+    />
   );
 }
 
@@ -480,14 +490,10 @@ export function UserRowActions({
               </ActionButton>
             ) : action === "pin" ? (
               <PinToggle key={action} label="Pin message" pinned={pinned} onToggle={onPin} />
+            ) : action === "comment" ? (
+              <CommentAction key={action} tabId={tabId} messageId={messageId} />
             ) : (
-              <CommentAndCopy
-                key={action}
-                tabId={tabId}
-                messageId={messageId}
-                text={text}
-                label="Copy message"
-              />
+              <CopyAction key={action} text={text} label="Copy message" />
             ),
           )}
           <FooterMenu items={menuItems} align="end" />

@@ -1,32 +1,24 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { MessageSquare, Quote } from "lucide-react";
+import { Quote } from "lucide-react";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { Popover, PopoverContent } from "@/ui/popover";
+import { CommentButton } from "@/features/artifacts/components/comment-thread";
 import { cn } from "@/lib/utils";
 import { CiteForm, citeShareTarget } from "./cite-popover";
 import {
   useAnchorHit,
-  useChatCommentsStore,
   useCommentActions,
+  useCommentBucket,
   useCommentDirectory,
   useHasCloudTarget,
 } from "../stores/chat-comments-store";
-import {
-  actionPosition,
-  anchorAt,
-  chatKeyOf,
-  isCitable,
-  selectedAnchor,
-} from "../lib/response-selection";
+import { actionPosition, chatKeyOf, isCitable, selectedAnchor } from "../lib/response-selection";
 
 /** One pill for both actions, so their height, padding and radius cannot
  *  drift apart. The design system's pill: control-xs tall, 2xs type,
  *  secondary ink that comes up to the foreground on hover, a 12px glyph. */
 const PILL_BUTTON =
   "flex h-control-xs shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2 text-2xs font-medium text-secondary-foreground transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-3 [&_svg]:shrink-0";
-
-/** How far a press may travel and still be a click rather than a drag. */
-const CLICK_SLOP_PX = 4;
 
 interface Target {
   anchor: HTMLElement;
@@ -41,15 +33,11 @@ interface Target {
  * One delegated controller per visible transcript, rather than document
  * listeners or pointer-driven React renders on every row.
  *
- * Two gestures on a prompt or a response, both answered here:
- *
- * - **A selection** brings the pill: Cite (a response only — it points the
- *   agent at its own words) and Comment, which starts a thread about the
- *   passage under the row (`inline-comment-threads.tsx`).
- * - **A click** on the prose starts a thread about the row, in the same
- *   place. A click, not a press that travelled (that is a selection being
- *   made) and not one that merely cleared a selection; never on a link, a
- *   button, a field, or a thread already under the row.
+ * A selection on a prompt or a response brings the pill: Cite (a response
+ * only — it points the agent at its own words) and Comment, the Timeline's
+ * thread popover grown out of the pill, about the selected passage. A plain
+ * click on the prose starts nothing: comments open in a popover, not in the
+ * transcript.
  *
  * The pill answers a selection and nothing else. It used to follow the
  * pointer over prose as well; that read as chrome chasing the cursor.
@@ -81,9 +69,6 @@ export function ResponseSelectionActions({
     // intact, so the next pointerup would read it and bring the toolbar back.
     // A dismissed selection stays dismissed until the selection changes.
     let dismissed = false;
-    // Where the press started, and whether a selection stood at the time:
-    // what tells a click from a drag and from a click that only cleared one.
-    let press: { x: number; y: number; hadSelection: boolean } | null = null;
     const dismiss = () => {
       openRef.current = false;
       dismissed = true;
@@ -137,15 +122,6 @@ export function ResponseSelectionActions({
     };
     const pointerDown = (event: PointerEvent) => {
       selecting = viewport.contains(event.target as Node);
-      const selection = window.getSelection();
-      press =
-        event.button === 0 && selecting
-          ? {
-              x: event.clientX,
-              y: event.clientY,
-              hadSelection: !!selection && !selection.isCollapsed,
-            }
-          : null;
       if (!openRef.current && !toolbarRef.current?.contains(event.target as Node)) dismiss();
     };
     const pointerUp = () => {
@@ -154,32 +130,7 @@ export function ResponseSelectionActions({
     };
     const pointerCancel = () => {
       selecting = false;
-      press = null;
       dismiss();
-    };
-    const click = (event: MouseEvent) => {
-      const p = press;
-      press = null;
-      if (!p || p.hadSelection || openRef.current) return;
-      if (
-        Math.abs(event.clientX - p.x) > CLICK_SLOP_PX ||
-        Math.abs(event.clientY - p.y) > CLICK_SLOP_PX
-      )
-        return;
-      const selection = window.getSelection();
-      if (selection && !selection.isCollapsed) return;
-      const node = event.target as Node | null;
-      const element = node instanceof Element ? node : (node?.parentElement ?? null);
-      if (element?.closest("a, [data-comment-composer]")) return;
-      const anchor = anchorAt(event.target as Node, viewport);
-      if (!anchor) return;
-      // Only a row the cloud session can anchor to: a session that is not
-      // shared takes no comments, so a click there starts nothing.
-      const chatKey = chatKeyOf(anchor);
-      const comments = useChatCommentsStore.getState();
-      const tab = comments.byTab[tabId];
-      if (!tab?.actions || !tab.anchors.rowIdByChatKey.has(chatKey)) return;
-      comments.actions.startCompose(tabId, chatKey, null);
     };
     const key = (event: KeyboardEvent) => {
       if (openRef.current) return; // An open popover owns its focus and Escape.
@@ -228,7 +179,6 @@ export function ResponseSelectionActions({
     document.addEventListener("pointerdown", pointerDown);
     document.addEventListener("focusin", focus);
     document.addEventListener("keydown", key);
-    viewport.addEventListener("click", click);
     viewport.addEventListener("scroll", layoutDismiss, true);
     window.addEventListener("resize", layoutDismiss);
     window.addEventListener("blur", layoutDismiss);
@@ -242,7 +192,6 @@ export function ResponseSelectionActions({
       document.removeEventListener("pointerdown", pointerDown);
       document.removeEventListener("focusin", focus);
       document.removeEventListener("keydown", key);
-      viewport.removeEventListener("click", click);
       viewport.removeEventListener("scroll", layoutDismiss, true);
       window.removeEventListener("resize", layoutDismiss);
       window.removeEventListener("blur", layoutDismiss);
@@ -262,10 +211,6 @@ export function ResponseSelectionActions({
         openRef.current = open;
         if (!open) setTarget(null);
       }}
-      onDismiss={() => {
-        openRef.current = false;
-        setTarget(null);
-      }}
     />
   );
 }
@@ -276,20 +221,19 @@ function SelectionToolbar({
   viewportRef,
   toolbarRef,
   onOpenChange,
-  onDismiss,
 }: {
   target: Target;
   tabId: string;
   viewportRef: React.RefObject<HTMLDivElement | null>;
   toolbarRef: React.RefObject<HTMLDivElement | null>;
   onOpenChange: (open: boolean) => void;
-  onDismiss: () => void;
 }) {
   const hit = useAnchorHit(tabId, target.chatKey);
   const actions = useCommentActions(tabId);
   const directory = useCommentDirectory(tabId);
   const cloud = useHasCloudTarget(tabId);
-  const canComment = !!(hit && actions);
+  const comments = useCommentBucket(tabId, target.chatKey);
+  const canComment = !!(hit && actions && directory);
   const [citing, setCiting] = useState(false);
   const changeCiting = (open: boolean) => {
     setCiting(open);
@@ -373,21 +317,23 @@ function SelectionToolbar({
           )}
         </Popover>
       )}
+      {/* The Timeline's thread popover, grown out of the pill: the passage
+          quoted, the thread, Reply and Resolve — the row's discussion,
+          without the transcript growing a block for it. */}
       {canComment && (
-        <button
-          type="button"
-          className={PILL_BUTTON}
-          onClick={() => {
-            useChatCommentsStore
-              .getState()
-              .actions.startCompose(tabId, target.chatKey, target.text);
-            window.getSelection()?.removeAllRanges();
-            onDismiss();
-          }}
-        >
-          <MessageSquare size={12} strokeWidth={1.7} />
-          Comment
-        </button>
+        <CommentButton
+          bare
+          showLabel
+          className={cn(PILL_BUTTON, "opacity-100 transition-none")}
+          anchorKind={hit!.anchorKind}
+          anchorId={hit!.rowId}
+          comments={comments}
+          actions={actions!}
+          directory={directory!}
+          selectedText={target.text}
+          onOpenChange={onOpenChange}
+          collisionBoundary={viewportRef.current ?? undefined}
+        />
       )}
     </div>
   );

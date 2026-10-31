@@ -24,7 +24,6 @@ import { openTurnDiff } from "../lib/open-turn-diff";
 import { ChangedFilesCard } from "./changed-files-card";
 import { UserRowActions } from "./user-row-actions";
 import { ImageAttachmentStrip } from "./image-attachments";
-import { InlineCommentThreads } from "./inline-comment-threads";
 import { FILE_DETAIL, ICON_PX, ICON_STROKE, ToolGlyph } from "./tool-glyph";
 import {
   GroupCommentPill,
@@ -174,8 +173,6 @@ export const UserRowView = memo(function UserRowView({
           </button>
         )}
         {overflows && <ExpandToggle row={row} onToggleExpand={onToggleExpand} />}
-        {/* The prompt's threads, under the bubble and as wide as it may be. */}
-        <InlineCommentThreads tabId={tabId} chatKey={messageId} proseRef={clampRef} />
         <UserRowActions
           tabId={tabId}
           text={row.text}
@@ -376,9 +373,6 @@ export const ProseRowView = memo(function ProseRowView({
             className="atlas-prose"
           />
         </div>
-      )}
-      {!row.streaming && (
-        <InlineCommentThreads tabId={tabId} chatKey={messageId} proseRef={proseRef} />
       )}
       {!row.streaming && !row.footerBelow && (
         <ProseRowActions

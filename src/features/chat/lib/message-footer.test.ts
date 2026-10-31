@@ -5,14 +5,14 @@ import { RowKind, type Row } from "./turn-rows";
 describe("userFooterActions", () => {
   it("keeps pin and copy inline and tucks edit into the menu", () => {
     expect(userFooterActions({ canRetry: false })).toEqual({
-      inline: ["pin", "copy"],
+      inline: ["pin", "copy", "comment"],
       overflow: ["edit"],
     });
   });
 
   it("leads with retry on the retryable prompt", () => {
     expect(userFooterActions({ canRetry: true })).toEqual({
-      inline: ["retry", "pin", "copy"],
+      inline: ["retry", "pin", "copy", "comment"],
       overflow: ["edit"],
     });
   });
@@ -28,14 +28,14 @@ describe("userFooterActions", () => {
 describe("responseFooterActions", () => {
   it("keeps copy and pin inline, with no menu", () => {
     expect(responseFooterActions({ canBranch: false })).toEqual({
-      inline: ["copy", "pin"],
+      inline: ["copy", "pin", "comment"],
       overflow: [],
     });
   });
 
   it("adds branch after copy on the latest response", () => {
     expect(responseFooterActions({ canBranch: true })).toEqual({
-      inline: ["copy", "branch", "pin"],
+      inline: ["copy", "branch", "pin", "comment"],
       overflow: [],
     });
   });

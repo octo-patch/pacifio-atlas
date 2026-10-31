@@ -10,7 +10,6 @@ import { COMMENT_LINK_EVENT, type CommentLinkDetail } from "../lib/comment-menti
 const state = vi.hoisted(() => ({
   shared: true,
   post: vi.fn(async () => {}),
-  startCompose: vi.fn(),
 }));
 const directory = { byId: new Map(), currentUserId: null };
 vi.mock("../stores/chat-comments-store", () => ({
@@ -21,7 +20,7 @@ vi.mock("../stores/chat-comments-store", () => ({
   useHasCloudTarget: () => state.shared,
   useChatCommentsStore: {
     getState: () => ({
-      actions: { startCompose: state.startCompose },
+      actions: {},
       // A shared session's anchors know both rows; one that is not shared has none.
       byTab: state.shared
         ? {
@@ -75,7 +74,6 @@ function select(testId: string) {
 
 beforeEach(() => {
   state.shared = true;
-  state.startCompose.mockReset();
   state.post.mockReset();
   state.post.mockResolvedValue(undefined);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
@@ -182,8 +180,10 @@ describe("selected response actions", () => {
         .getAllByRole("button")
         .map((b) => b.textContent),
     ).toEqual(["Comment"]);
+    // Comment opens the Timeline's thread popover off the pill, with a field
+    // to write in — not a composer in the transcript.
     fireEvent.click(within(toolbar).getByRole("button", { name: "Comment" }));
-    expect(state.startCompose).toHaveBeenCalledWith("chat-a", "wire-prompt", "User prompt");
+    expect(await screen.findByRole("textbox")).toBeTruthy();
   });
 
   it("is Cite alone on a session that cannot be commented on", async () => {
@@ -199,7 +199,7 @@ describe("selected response actions", () => {
     ).toEqual(["Cite"]);
   });
 
-  it("keeps Comment beside Cite, and Comment starts a thread about the passage under the row", async () => {
+  it("keeps Comment beside Cite, and Comment opens the thread popover off the pill", async () => {
     render(<Harness />);
     select("prose");
     const toolbar = await screen.findByRole("group", { name: "Selected response actions" });
@@ -209,15 +209,9 @@ describe("selected response actions", () => {
         .map((b) => b.textContent),
     ).toEqual(["Cite", "Comment"]);
     fireEvent.click(within(toolbar).getByRole("button", { name: "Comment" }));
-    expect(state.startCompose).toHaveBeenCalledWith(
-      "chat-a",
-      "wire-response",
-      "Scope it to the usage page.",
-    );
-    expect(window.getSelection()?.isCollapsed).toBe(true);
-    await waitFor(() =>
-      expect(screen.queryByRole("group", { name: "Selected response actions" })).toBeNull(),
-    );
+    expect(await screen.findByRole("textbox")).toBeTruthy();
+    // The pill stays while its popover is open: the popover hangs off it.
+    expect(screen.getByRole("group", { name: "Selected response actions" })).toBeTruthy();
   });
 
   it("supports Tab focus and dismisses on Escape, outside click and panel scroll", async () => {
@@ -272,40 +266,15 @@ describe("selected response actions", () => {
     expect(screen.queryByRole("group")).toBeNull();
   });
 
-  it("starts a whole-row thread on a click in the prose, on prompts and responses alike", () => {
-    render(<Harness />);
-    click(screen.getByTestId("prose").firstChild as Element);
-    expect(state.startCompose).toHaveBeenCalledWith("chat-a", "wire-response", null);
-    click(screen.getByTestId("user"));
-    expect(state.startCompose).toHaveBeenLastCalledWith("chat-a", "wire-prompt", null);
-  });
-
-  it("starts nothing on a click in a session that is not shared", () => {
-    state.shared = false;
+  it("starts nothing on a plain click in the prose: comments open in a popover", async () => {
     render(<Harness />);
     click(screen.getByTestId("prose").firstChild as Element);
     click(screen.getByTestId("user"));
-    expect(state.startCompose).not.toHaveBeenCalled();
-  });
-
-  it("does not start one on a drag, a link, chrome, or a click that only cleared a selection", async () => {
-    render(<Harness />);
-    const prose = screen.getByTestId("prose");
-    // A press that travelled is a selection being made.
-    fireEvent.pointerDown(prose, { button: 0, clientX: 100, clientY: 200 });
-    fireEvent.pointerUp(prose, { clientX: 160, clientY: 200 });
-    fireEvent.click(prose, { clientX: 160, clientY: 200 });
-    // A link is a link.
-    click(screen.getByRole("link"));
-    // Chrome outside any row.
-    click(screen.getByText("Outside"));
-    // A selection stood when the press began: the click clears it, no more.
-    select("prose");
-    fireEvent.pointerDown(prose, { button: 0, clientX: 100, clientY: 200 });
-    window.getSelection()?.removeAllRanges();
-    fireEvent.pointerUp(prose, { clientX: 100, clientY: 200 });
-    fireEvent.click(prose, { clientX: 100, clientY: 200 });
-    expect(state.startCompose).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+    expect(screen.queryByRole("group")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   it("removes selection actions when the panel is hidden or the response disappears", async () => {
