@@ -46,6 +46,7 @@ import {
 } from "@/ui/dropdown-menu";
 import { snoozePresets } from "@/features/chat/lib/session-snooze";
 import type { SidebarSession } from "../lib/sidebar-sessions";
+import { useSessionListScroll } from "../lib/session-list-scroll";
 import {
   resolveSessionRowStatus,
   resolveSessionTopStatus,
@@ -379,7 +380,11 @@ export const SessionRow = memo(function SessionRow(props: SessionRowProps) {
     </Hint>
   ) : null;
 
-  const hoverCardDisabled = snoozeMenuOpen || badgeOpen || props.isDragging || isRenaming;
+  // Closed while the list scrolls: the card is anchored to this row, and a
+  // scroll carries the row out from under it (`session-list-scroll.ts`).
+  const listScrolling = useSessionListScroll.use.scrolling();
+  const hoverCardDisabled =
+    snoozeMenuOpen || badgeOpen || props.isDragging || isRenaming || listScrolling;
 
   if (variant === "slim") {
     return (
@@ -672,9 +677,10 @@ export const SessionSearchResultRow = memo(function SessionSearchResultRow(props
     liveElsewhere: session.liveElsewhere,
     watching: session.pullRequests.some((p) => p.watching),
   });
+  const listScrolling = useSessionListScroll.use.scrolling();
   return (
     <li role="presentation" className="list-none">
-      <TooltipPrimitive.Root>
+      <TooltipPrimitive.Root disabled={listScrolling}>
         <TooltipPrimitive.Trigger
           render={
             <button

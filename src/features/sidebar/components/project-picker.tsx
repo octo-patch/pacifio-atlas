@@ -26,7 +26,7 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
+import { Icon } from "@/ui/icon";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { useCommandPaletteStore } from "@/features/command-palette/stores/command-palette-store";
 import {
@@ -40,6 +40,7 @@ import { resolveScopeProjectId, type SidebarProject } from "../lib/sidebar-sessi
 import { openProjectSettings } from "../lib/sidebar-actions";
 import { useSidebarStore } from "../stores/sidebar-store";
 import { ProjectBadge } from "./session-row-parts";
+import { GlassIconButton } from "./glass-icon-button";
 
 /** Past this many projects the menu grows a search field. */
 const SEARCH_THRESHOLD = 6;
@@ -106,7 +107,7 @@ export function ProjectPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const org = useOrgMenu();
-  const paletteHint = useActionShortcut("nav.commandPalette")?.label;
+  const addProjectHint = useActionShortcut("workspace.add")?.label;
   const scoped = projects.find((project) => project.id === scopeProjectId) ?? null;
   const searchable = projects.length > SEARCH_THRESHOLD;
   const searching = query.trim().length > 0;
@@ -135,21 +136,27 @@ export function ProjectPicker({
             <button
               type="button"
               aria-label={`Sessions in: ${label}`}
-              className="flex h-control-lg min-w-0 cursor-pointer items-center rounded-md pr-2 text-sm font-medium text-foreground outline-none transition-colors hover:bg-element-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-element-hover"
+              // The destinations' row (`DestinationButton`): the same height,
+              // inset and icon-to-label gap, so the badge sits in their icon
+              // column.
+              className="flex h-7 min-w-0 cursor-pointer items-center gap-2.5 rounded-md px-2 text-sm leading-none font-medium text-foreground outline-none transition-colors hover:bg-element-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-element-hover"
             />
           }
         >
-          {/* The destinations' icon box, so the badge lines up with their
-              icons. */}
-          <span className="flex size-control-lg shrink-0 items-center justify-center">
+          {/* A 14px box, the destinations' icon (`Icon` md, in pixels). */}
+          <span className="flex size-[14px] shrink-0 items-center justify-center">
             {scoped ? (
-              <ProjectBadge name={scoped.name} path={scoped.path} />
+              <ProjectBadge
+                name={scoped.name}
+                path={scoped.path}
+                className="size-[14px] text-3xs"
+              />
             ) : (
-              <Boxes aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              <Icon icon={Boxes} size="md" aria-hidden className="shrink-0 text-muted-foreground" />
             )}
           </span>
           <span className="min-w-0 truncate text-left">{label}</span>
-          <ChevronDown aria-hidden className="ml-1 size-3 shrink-0 text-muted-foreground" />
+          <ChevronDown aria-hidden className="-ml-1 size-3 shrink-0 text-muted-foreground" />
         </DropdownMenu.Trigger>
 
         <DropdownMenu.Portal>
@@ -300,19 +307,13 @@ export function ProjectPicker({
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
 
-      {/* Search everything: the command palette. */}
-      <div className="ml-auto flex shrink-0 items-center">
-        <Hint label="Search" shortcut={paletteHint}>
-          <button
-            type="button"
-            aria-label="Search"
-            onClick={() => window.dispatchEvent(new CustomEvent("atlas:command-palette"))}
-            className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-element-hover hover:text-foreground"
-          >
-            <Search aria-hidden className="size-3.5" />
-          </button>
-        </Hint>
-      </div>
+      <GlassIconButton
+        icon={Plus}
+        label="Add project"
+        shortcut={addProjectHint}
+        onClick={() => useCommandPaletteStore.getState().actions.openAddProject()}
+        className="ml-auto"
+      />
       {org.dialogs}
     </div>
   );

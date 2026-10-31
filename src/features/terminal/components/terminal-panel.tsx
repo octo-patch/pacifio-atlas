@@ -14,7 +14,7 @@ import { BlockTerminal } from "./block-terminal";
 import { terminalSessions } from "../lib/terminal-session";
 import { useIsFocusedTerminal } from "../lib/focus";
 import { pickPaneInDirection, type Direction, type RectLike } from "../lib/pane-navigation";
-import { TerminalSidebar } from "./terminal-sidebar";
+import { TerminalTabStrip } from "./terminal-tab-strip";
 import { DrawerPaneActions } from "./drawer-pane-actions";
 import { cn } from "@/lib/utils";
 
@@ -32,15 +32,17 @@ interface TerminalPanelProps {
    *  says. */
   visible?: boolean;
   /** `drawer`: a session's terminal drawer. A pane with one terminal shows no
-   *  side list (a list of one, 220px wide, in a drawer a few lines tall), only
-   *  its actions, floating at its top-right; the list appears with the second
+   *  tab strip (a strip of one, in a drawer a few lines tall), only its
+   *  actions, floating at its top-right; the strip appears with the second
    *  terminal. */
   variant?: "tab" | "drawer";
 }
 
 /**
  * A terminal tab: a tree of resizable panes, each holding one or more
- * terminals (tabs within the pane).
+ * terminals (tabs within the pane, in a strip across its top). Panes split
+ * down only (`terminal.splitDown`); a tree restored from before that rule may
+ * still hold a side-by-side split, and renders as it was.
  *
  * Terminals render INSIDE their pane container. The previous design measured
  * every container with `getBoundingClientRect` and floated the terminals over
@@ -150,12 +152,6 @@ export function TerminalPanel({ tabId, projectId, visible, variant = "tab" }: Te
       },
       "terminal.prevTab": () => cycleTerminal(-1),
       "terminal.nextTab": () => cycleTerminal(1),
-      "terminal.splitRight": () => {
-        const pane = activePane();
-        if (!pane) return false;
-        splitPane(tabId, pane.id, "horizontal");
-        return true;
-      },
       "terminal.splitDown": () => {
         const pane = activePane();
         if (!pane) return false;
@@ -307,20 +303,19 @@ function PaneView({
   });
 
   return (
-    // A size container: the side list folds to glyphs in a narrow pane.
     <div
       className={cn(
-        "@container/pane h-full flex",
+        "flex h-full flex-col",
         isActivePane && groupFocused && "ring-1 ring-[var(--atlas-element-hover)] ring-inset",
       )}
     >
       {drawer && pane.terminals.length < 2 ? null : (
-        <TerminalSidebar pane={pane} tabId={tabId} zoomed={zoomed} hasSplits={hasSplits} />
+        <TerminalTabStrip pane={pane} tabId={tabId} zoomed={zoomed} hasSplits={hasSplits} />
       )}
       {/* The pane's terminals, in the DOM where they belong. Inactive ones stay
           laid out (`visibility:hidden`, not `display:none`) so their fit is
           real and switching is instant. */}
-      <div className="flex-1 min-w-0 min-h-0 relative" data-pane-container={pane.id}>
+      <div className="relative min-h-0 min-w-0 flex-1" data-pane-container={pane.id}>
         {pane.terminals.map((ptyId) => (
           <TerminalSlot
             key={ptyId}

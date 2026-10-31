@@ -14,7 +14,17 @@ import {
   anyTerminalNeedsAttention,
 } from "@/features/terminal/lib/terminal-notifier";
 import { useChatStore } from "@/features/chat/stores/chat-store";
-import { Bell, ArrowDownToLine, Hammer, Loader2, Minus, Square, Copy, X } from "lucide-react";
+import {
+  Bell,
+  ArrowDownToLine,
+  Hammer,
+  Loader2,
+  Minus,
+  Search,
+  Square,
+  Copy,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppProfile } from "@/lib/app-profile";
 import { HintGroup, HintItem } from "@/ui/hint-group";
@@ -38,6 +48,8 @@ import { OrgSwitcher } from "@/features/organisations/components/org-switcher";
 import { BreadcrumbButton } from "./breadcrumb-button";
 import { OPEN_CAPTURE_EVENT } from "@/features/capture/lib/open-capture";
 import { RightPanelToggle } from "@/features/layout/components/right-panel-toggle";
+import { AccountButton } from "@/features/auth/components/account-button";
+import { HelpSubmenu } from "./help-submenu";
 import { endPeek, releasePeek, requestPeek } from "@/features/sidebar/lib/sidebar-peek";
 
 /**
@@ -200,7 +212,7 @@ export function Titlebar() {
  * `commands::window::apply_traffic_light_inset`. The inset is dropped in
  * fullscreen, which hides the lights; Windows and Linux have none on the left.
  */
-export function CornerCluster() {
+export function CornerCluster({ search = false }: { search?: boolean } = {}) {
   const isFullscreen = useFullscreen();
   const inset = isMac && !isFullscreen;
   return (
@@ -208,6 +220,9 @@ export function CornerCluster() {
       className={cn(
         "flex shrink-0 items-center gap-1",
         inset ? "pl-[calc(78px/var(--ui-zoom,1))]" : "pl-2",
+        // The sidebar's corner spans the sidebar, so search can sit at its
+        // far end.
+        search && "min-w-0 flex-1 pr-2",
       )}
     >
       <DevBadge className="mr-1" />
@@ -215,8 +230,29 @@ export function CornerCluster() {
       {!isMac && <MenuBar className="mr-1" />}
       <HintGroup>
         <SidebarToggle />
+        {/* Beside the toggle while the traffic lights take the corner's
+            start; with the lights gone (fullscreen, or Windows and Linux) the
+            toggle holds the start and search the far end. */}
+        {search && <PaletteSearchButton className={inset ? undefined : "ml-auto"} />}
       </HintGroup>
     </div>
+  );
+}
+
+/** Search everything: opens the command palette (⌘K). */
+function PaletteSearchButton({ className }: { className?: string }) {
+  const hint = useActionShortcut("nav.commandPalette")?.label;
+  return (
+    <HintItem label={hint ? `Search (${hint})` : "Search"} className={className}>
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent("atlas:command-palette"))}
+        aria-label="Search"
+        className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-element-hover hover:text-secondary-foreground"
+      >
+        <Search size={14} aria-hidden />
+      </button>
+    </HintItem>
   );
 }
 
@@ -268,13 +304,12 @@ export function ProjectBreadcrumb() {
 
 /**
  * The bar's right end, the window's group: the dock while it has something to
- * say, then the right panel toggle while a project is open, then the
- * Windows/Linux window buttons. The account is not here: it lives in the
- * sidebar's footer.
+ * say, then the right panel toggle while a project is open, then the account
+ * (its menu holds Settings and Help), then the Windows/Linux window buttons.
  *
  * This group never moves: it is drawn by whichever header is at the window's
- * right edge, and nothing a tab adds comes after it, so the panel toggle is
- * the bar's last control on every tab and whether the panel is shown or not.
+ * right edge, and nothing a tab adds comes after it, so the account is the
+ * bar's last control on every tab and whether the panel is shown or not.
  * It is spaced like the session's own controls (`SessionHeaderControls`), so
  * the icons read as one even row.
  */
@@ -294,6 +329,10 @@ function TopbarTrailing() {
           <RightPanelToggle />
         </HintGroup>
       ) : null}
+      {/* Outside the project guard: a fresh install has no project open, and
+          sign-in, Settings and Help must be reachable from that empty
+          window. */}
+      <AccountButton menuExtra={<HelpSubmenu />} />
       {(isWindows || isLinux) && <WindowControls />}
     </div>
   );

@@ -1,7 +1,7 @@
 // The account menu's Help submenu: docs, feedback, shortcuts, the community
 // links, the update check and the running version. It used to be its own
-// button in the sidebar footer; the account (the title bar's avatar) holds it
-// now.
+// button in the sidebar footer; the account (the avatar at the title bar's
+// right end) holds it now.
 
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";

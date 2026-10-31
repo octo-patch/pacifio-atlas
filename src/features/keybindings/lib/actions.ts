@@ -416,18 +416,13 @@ export const ACTIONS = [
     defaults: ["cmd+w"],
   },
   {
-    id: "terminal.splitRight",
-    title: "Split terminal right",
-    category: "Terminal",
-    when: "terminalFocus",
-    defaults: ["cmd+d"],
-  },
-  {
     id: "terminal.splitDown",
     title: "Split terminal down",
     category: "Terminal",
     when: "terminalFocus",
-    defaults: ["cmd+shift+d"],
+    // Terminals split down only; ⌘D, the split key everywhere else, splits
+    // down too rather than doing nothing.
+    defaults: ["cmd+d", "cmd+shift+d"],
   },
   {
     id: "terminal.closePane",

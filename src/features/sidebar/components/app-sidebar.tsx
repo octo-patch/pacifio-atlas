@@ -1,8 +1,11 @@
 // The app's one left sidebar: full height, from the window's top edge to its
 // bottom, with the window's corner — traffic lights, dev badge, the sidebar
 // toggle — as its top row. Under that, the project picker (the organisation
-// sits at the foot of its menu), the destinations, the sessions, and the
-// notification bell last.
+// sits at the foot of its menu) with Add project beside it, Team chat and
+// Timeline, the sessions, and last a dock of icons — Memory, Knowledge, Source
+// control, Usage — and the notification bell. Search (the command palette)
+// sits in the corner beside the sidebar toggle. The account is the title bar's last
+// control (`TopbarTrailing`), not the sidebar's.
 //
 // Closed, it is gone: no rail of icons stays behind. The corner moves to the
 // leftmost column header at the same pixels (`CornerCluster`), so the toggle
@@ -23,8 +26,6 @@
 
 import { useEffect, useRef } from "react";
 import { CornerCluster, useWindowDrag } from "@/components/titlebar";
-import { HelpSubmenu } from "@/components/help-submenu";
-import { AccountButton } from "@/features/auth/components/account-button";
 import { cn } from "@/lib/utils";
 import {
   KnowledgeButton,
@@ -58,7 +59,7 @@ export function AppSidebar({ className }: { className?: string }) {
     >
       {/* The window's corner. Every stretch of it drags the window. */}
       <div {...drag} className="flex h-titlebar shrink-0 select-none items-center">
-        <CornerCluster />
+        <CornerCluster search />
       </div>
       <div className="px-[8px]">
         <SidebarProjectPicker />
@@ -72,35 +73,36 @@ export function AppSidebar({ className }: { className?: string }) {
   );
 }
 
-/** The destinations, top to bottom: the global views, then the open
- *  project's. */
+/** The labelled destinations: the two views reached most often. */
 function Destinations() {
   return (
     <nav aria-label="Destinations" className="flex shrink-0 flex-col items-start gap-0.5 px-[8px]">
       <TeamChatButton />
       <TimelineButton />
-      <MemoryButton />
-      <UsageButton />
-      <span aria-hidden className="mx-1.5 my-1 h-px self-stretch bg-border-subtle" />
-      {/* The project's own views: greyed, saying why, with none open. */}
-      <KnowledgeButton />
-      <SourceControlButton />
     </nav>
   );
 }
 
-/** The sidebar's last row: the notification bell, then the account. Both
- *  are about you rather than the screen in front of you, so they live here
- *  and not in the title bar. A short fade from the sidebar's colour separates
- *  the scrolling session list from them. */
+/** The sidebar's last row: a pill of icons — Memory, the open project's
+ *  views (greyed, saying why, with none open), Usage — and the notification
+ *  bell at the far end. A short fade
+ *  from the sidebar's colour separates the scrolling session list from it. */
 function SidebarFoot() {
   return (
-    <div className="relative flex shrink-0 items-center gap-1 px-[8px] pb-2 pt-1 before:pointer-events-none before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-gradient-to-t before:from-sidebar before:to-transparent">
-      <div className="min-w-0 flex-1">
-        <NotificationsButton />
+    <nav
+      aria-label="Sidebar tools"
+      className="relative flex shrink-0 items-center gap-0.5 px-[8px] pb-2 pt-1 before:pointer-events-none before:absolute before:inset-x-0 before:-top-4 before:h-4 before:bg-gradient-to-t before:from-sidebar before:to-transparent"
+    >
+      {/* The pill the title bar's dock used to be: one capsule with a glass
+          rim, so the three read as a set rather than three loose glyphs. */}
+      <div className="glass-rim flex items-center gap-0.5 rounded-full p-0.5">
+        <MemoryButton iconOnly className="rounded-full" />
+        <KnowledgeButton iconOnly className="rounded-full" />
+        <SourceControlButton iconOnly className="rounded-full" />
+        <UsageButton iconOnly className="rounded-full" />
       </div>
-      <AccountButton menuSide="top" menuExtra={<HelpSubmenu />} />
-    </div>
+      <NotificationsButton iconOnly className="ml-auto" />
+    </nav>
   );
 }
 

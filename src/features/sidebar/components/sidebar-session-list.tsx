@@ -45,6 +45,7 @@ import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcu
 import { useAppStore } from "@/features/app/stores/app-store";
 import { ImportThreadsModal } from "@/features/chat/components/import-threads-modal";
 import { pickAndAddProject } from "@/features/projects/lib/pick-project";
+import { noteSessionListScroll } from "../lib/session-list-scroll";
 import {
   SETTLED_SHELF_FIRST_PAGE,
   SETTLED_SHELF_PAGE,
@@ -560,6 +561,7 @@ export function SidebarSessions() {
           <div
             ref={scrollerRef}
             onKeyDown={onListKeyDown}
+            onScroll={noteSessionListScroll}
             className="hide-scrollbar relative min-h-0 flex-1 overflow-y-auto px-2 pb-2"
           >
             {isSearching ? (

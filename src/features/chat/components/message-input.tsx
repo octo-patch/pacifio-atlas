@@ -80,7 +80,6 @@ import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { ComposerOptionsPill } from "./composer-options-pill";
 import { UsagePill } from "./usage-pill";
 import { composerPillLabelClass } from "./composer-dropup";
-import { ImageAttachmentStrip } from "./image-attachments";
 import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
 import { SleepPill } from "./sleep-pill";
@@ -1098,7 +1097,7 @@ export function MessageInput({
   // ── File chips ──────────────────────────────────────────────────────────
   // A path the agent reads off disk, as a chip at the caret. Every file with
   // a path arrives through `attachPaths` (below), which calls this for all of
-  // them; an image gets a thumbnail above the field as well.
+  // them; an image the agent can take also stages its bytes.
   const composerRef = useRef<HTMLDivElement>(null);
   const insertFileChips = useCallback(
     (paths: string[], sizes?: ReadonlyMap<string, number>) => {
@@ -1121,25 +1120,19 @@ export function MessageInput({
     [projectPath],
   );
   // ── Image attachments (multimodal input) ─────────────────────────────────
-  // Images staged for the next send, shown as thumbnails above the input.
-  // Only populated when the bound agent advertised promptCapabilities.image;
-  // otherwise picked images degrade to path mention chips (any agent can
-  // read those off disk).
+  // Images staged for the next send. Only populated when the bound agent
+  // advertised promptCapabilities.image; otherwise picked images degrade to
+  // path mention chips (any agent can read those off disk).
   //
-  // A staged image is also a chip in the prompt — the thumbnail is the
-  // preview, the chip is the reference in the sentence — and the two are one
-  // attachment, joined by `path`: the thumbnail's ✕ takes the chip out, and
-  // deleting the chip drops the thumbnail (`handleDocChange`). The agent gets
-  // both the inline bytes (downscaled if over budget) and the path, which it
-  // can open at full size.
+  // A staged image shows only as its chip in the prompt — no thumbnail strip
+  // above the field, which repeated what the chip already says. The chip and
+  // the staged bytes are one attachment, joined by `path`: deleting the chip
+  // drops the bytes (`handleDocChange`). The agent gets both the inline bytes
+  // (downscaled if over budget) and the path, which it can open at full size.
+  // The sent message still shows the images (`transcript-rows.tsx`).
   const [stagedImages, setStagedImages] = useState<StagedImage[]>([]);
   const stagedRef = useRef(stagedImages);
   stagedRef.current = stagedImages;
-  const removeStagedImage = useCallback((index: number) => {
-    const path = stagedRef.current[index]?.path;
-    if (path) inputRef.current?.removeMention("file", path);
-    setStagedImages((prev) => prev.filter((_, j) => j !== index));
-  }, []);
   // Non-null (the repo's full_name) while a GitHub repo is cloning into
   // `.atlas/repos`. The composer is locked for the duration so the user can't
   // send a prompt that references a half-synced repo.
@@ -1200,7 +1193,7 @@ export function MessageInput({
   // picked in the "+" menu, copied in Finder and pasted, a pasted screenshot
   // (spooled to a file first, `handlePasteImages`), the screenshot tool:
   // every file becomes a chip at the caret, and an image the agent can take
-  // is staged inline as well, with a thumbnail above the field. One routing
+  // is staged inline as well, behind its chip. One routing
   // for all of them, because the ways used to disagree: a paste staged a
   // thumbnail and left nothing in the sentence, so "look at [this]" had no
   // "this" in it; a drop made a chip and no thumbnail; and before that a
@@ -1241,7 +1234,7 @@ export function MessageInput({
   //
   // A drop is a pointing gesture — "this one, here, in the sentence I am
   // writing" — and `attachPaths` keeps that: the chip lands at the caret, and
-  // the thumbnail is on top of it, not instead of it. The chip carries the
+  // an image's staged bytes ride along with it. The chip carries the
   // absolute path, which rides to the agent as an ACP `ResourceLink`
   // (`compose_prompt`) — every agent reads those.
   const dropZoneRef = useRef<HTMLElement | null>(null);
@@ -1430,8 +1423,8 @@ export function MessageInput({
 
   // Clipboard images (screenshots). A pasted screenshot is bytes with no
   // path, so it is spooled to a scratch file first and then attached like
-  // every other file (`attachPaths`): a chip in the sentence, and a thumbnail
-  // when the agent takes images. Taking the paste either way matters —
+  // every other file (`attachPaths`): a chip in the sentence, with its bytes
+  // staged when the agent takes images. Taking the paste either way matters —
   // declining it left the paste to a handler that only knows Finder paths,
   // and the image vanished without a word.
   const handlePasteImages = useCallback(
@@ -1448,7 +1441,7 @@ export function MessageInput({
   );
 
   // The draft mirror's doc listener, plus pruning: a chip the user deleted
-  // (Backspace, ⌘Z, a cleared draft) takes its thumbnail with it. Checked
+  // (Backspace, ⌘Z, a cleared draft) takes its staged image with it. Checked
   // only while an image is staged, so the common keystroke pays nothing.
   const { onDocChange: mirrorDraft } = draft;
   const handleDocChange = useCallback(() => {
@@ -2061,11 +2054,6 @@ export function MessageInput({
               resting.resting && "shadow-md",
             )}
           >
-            <ImageAttachmentStrip
-              images={stagedImages}
-              onRemove={removeStagedImage}
-              className="px-3 pt-3"
-            />
             {/* Only the text area is pointer-blocked while `disabled`:
               `pointer-events-none` stops click-to-focus/typing AND the focus
               event, so we never trigger the agent-bind listener against a CLI

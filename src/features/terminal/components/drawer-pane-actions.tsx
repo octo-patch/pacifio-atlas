@@ -2,13 +2,13 @@
 //
 // A drawer pane's actions while it holds a single terminal.
 //
-// In a terminal tab every pane carries the side list, whose header holds these
+// In a terminal tab every pane carries the tab strip, which holds these
 // actions. A session's terminal drawer is a few lines tall and usually holds
-// one shell, where a 220px list of one is all chrome; so until a second
-// terminal arrives the actions float, small, over the pane's top-right corner
-// and the shell has the full width. A second terminal brings the list back.
+// one shell, where a strip of one is all chrome; so until a second terminal
+// arrives the actions float, small, over the pane's top-right corner and the
+// shell has the full height. A second terminal brings the strip back.
 
-import { Columns2, Maximize2, Plus, Rows2, Trash2, X } from "lucide-react";
+import { Maximize2, Plus, Rows2, Trash2, X } from "lucide-react";
 
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { IconButton } from "@/ui/icon-button";
@@ -42,15 +42,6 @@ export function DrawerPaneActions({
     >
       <HintGroup>
         <div className="pointer-events-auto inline-flex items-center gap-px rounded-md border border-border bg-background p-px shadow-sm">
-          <HintItem label="Split right">
-            <IconButton
-              icon={Columns2}
-              label="Split right"
-              variant="ghost"
-              size="xs"
-              onClick={() => splitPane(tabId, pane.id, "horizontal")}
-            />
-          </HintItem>
           <HintItem label="Split down">
             <IconButton
               icon={Rows2}

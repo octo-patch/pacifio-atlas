@@ -57,7 +57,8 @@ const VSCODE: PresetBindings = {
   "tabs.next": ["cmd+alt+right", "cmd+shift+]"],
   // ⌘\ splits a focused terminal in VS Code; the terminal scope shadows
   // Atlas's global split-right there, which is exactly the VS Code behaviour.
-  "terminal.splitRight": ["cmd+\\"],
+  // Atlas terminals split down only, so it splits down.
+  "terminal.splitDown": ["cmd+\\"],
   ...CTRL_DIGIT_TABS,
 };
 

@@ -47,7 +47,7 @@ const RESIDUAL_SESSION =
   "Signed out on this device. Your Atlas session may stay active on the server until it expires.";
 
 /**
- * The menu behind the sidebar footer's avatar, laid out as the Atlas web app's:
+ * The menu behind the title bar's avatar, laid out as the Atlas web app's:
  * who you are, Settings and Privacy, the two appearance choices people change
  * most (theme and interface size, each a submenu showing its current value),
  * and the way out.

@@ -151,7 +151,9 @@ export function SessionHoverCardPopup({
         side="right"
         align="start"
         sideOffset={4}
-        className="isolate z-tooltip"
+        // Hidden while its row is clipped out of the list's view, rather
+        // than left pinned to the list's edge.
+        className="isolate z-tooltip data-anchor-hidden:invisible"
       >
         <TooltipPrimitive.Popup
           className={cn(

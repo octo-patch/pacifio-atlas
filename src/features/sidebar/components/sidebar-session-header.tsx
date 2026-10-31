@@ -5,9 +5,10 @@
 // for results, the arrow keys move a highlight through them (the field keeps
 // focus), Enter opens the highlighted one and Escape clears.
 
-import type { KeyboardEvent, ReactNode, RefObject } from "react";
-import { Search, SquarePen, X } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
+import type { KeyboardEvent, RefObject } from "react";
+import { Plus, Search, X } from "lucide-react";
+import { GlassIconButton } from "./glass-icon-button";
+import { Icon } from "@/ui/icon";
 
 export const SEARCH_RESULTS_ID = "sidebar-session-search-results";
 export const searchResultId = (index: number) => `sidebar-session-search-result-${index}`;
@@ -43,9 +44,11 @@ export function SidebarSessionHeader(props: SidebarSessionHeaderProps) {
   // screen reader on nothing.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
   return (
-    <div className="flex items-center gap-1 px-2">
-      <label className="flex h-7 min-w-0 flex-1 cursor-text items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-element-hover hover:text-foreground focus-within:bg-element-hover">
-        <Search aria-hidden className="size-3.5 shrink-0" />
+    // The sidebar's own inset and the destinations' row, so the search glyph
+    // sits in their icon column (`DestinationButton`).
+    <div className="flex items-center gap-1 px-[8px]">
+      <label className="flex h-7 min-w-0 flex-1 cursor-text items-center gap-2.5 rounded-md px-2 text-sm text-muted-foreground hover:bg-element-hover hover:text-foreground focus-within:bg-element-hover">
+        <Icon icon={Search} size="md" aria-hidden className="shrink-0" />
         <input
           ref={searchInputRef}
           type="search"
@@ -78,42 +81,14 @@ export function SidebarSessionHeader(props: SidebarSessionHeaderProps) {
         ) : null}
       </label>
       <div className="flex shrink-0 items-center">
-        <HeaderIconButton
-          label={
-            props.newSessionShortcut ? `New session ${props.newSessionShortcut}` : "New session"
-          }
+        <GlassIconButton
+          icon={Plus}
+          label="New session"
+          shortcut={props.newSessionShortcut ?? undefined}
           disabled={props.newSessionDisabled}
           onClick={props.onNewSession}
-        >
-          <SquarePen aria-hidden className="size-3.5" />
-        </HeaderIconButton>
+        />
       </div>
     </div>
-  );
-}
-
-function HeaderIconButton({
-  label,
-  children,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  children: ReactNode;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Hint label={label}>
-      <button
-        type="button"
-        aria-label={label}
-        disabled={disabled}
-        onClick={onClick}
-        className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-element-hover hover:text-foreground disabled:cursor-default disabled:opacity-40"
-      >
-        {children}
-      </button>
-    </Hint>
   );
 }
