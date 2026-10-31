@@ -842,12 +842,6 @@
 .atlas-chat-composer .ProseMirror::-webkit-scrollbar {
   display: none;
 }
-/* Open (not resting, `use-composer-resting.ts`), the field offers a second
-   line of room; resting, it is the one-line pill. */
-[data-chat-composer]:not([data-resting]) .atlas-chat-composer .ProseMirror {
-  min-height: 64px;
-  transition: min-height 0.2s var(--ease-out-strong);
-}
 .atlas-chat-composer .atlas-composer-placeholder {
   top: 12px;
   left: 16px;
