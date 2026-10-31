@@ -469,6 +469,8 @@ const TabColumn = memo(function TabColumn({
   return (
     <div
       className="h-full flex flex-col overflow-hidden bg-background"
+      // The notifications drawer sizes itself to the surfaces pane by this.
+      data-surface-column={main ? undefined : ""}
       onMouseDownCapture={() => setFocusedGroup(groupId)}
     >
       {/* The column's header, and this column's slice of the window bar: the
