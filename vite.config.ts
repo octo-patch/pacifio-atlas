@@ -93,6 +93,11 @@ export default defineConfig(() => ({
       "@base-ui/react/dialog",
       "@base-ui/react/context-menu",
       "@base-ui/react/tooltip",
+      // Imported only by the mock-backend script, which `transformIndexHtml`
+      // injects, so the dep scanner never sees it. Undeclared, a cold cache
+      // finds it mid-load and force-reloads the page: two Reacts ("Invalid
+      // hook call"), failed lazy imports, and dropped IPC callbacks.
+      "@tauri-apps/api/mocks",
       // Pre-bundle the Tiptap stack so opening the Knowledge tab for
       // the first time doesn't trigger Vite's "new dependencies
       // optimized → reloading" cycle (which dumps editor state and
