@@ -69,6 +69,7 @@ import { logEvent } from "@/features/log/lib/log";
 import {
   closeCommandTerminal,
   openCommandTerminal,
+  useCommandTerminalPresence,
   shellLine,
   type CommandTerminal,
 } from "@/features/terminal/lib/open-command-terminal";
@@ -222,8 +223,7 @@ function AgentOAuthModal({
    *  The headless run pipes stdio, so a login that ASKS something — a provider
    *  picker, a device code, a y/n — can never be answered and simply hangs
    *  (#24). Atlas used to run it headlessly first and let the user discover the
-   *  hang, then offer a terminal; now the terminal IS the flow. Zed does not
-   *  spawn these itself either: it hands them to the project terminal.
+   *  hang, then offer a terminal; now the terminal IS the flow.
    *
    *  Keyed on the method's OWN advertised command, never on which agent it is:
    *  whether a login is interactive is not something ACP says, so every agent
@@ -449,6 +449,23 @@ function AgentOAuthModal({
   const centerX = useCenterPanelCenterX();
   const centred = centerX != null ? { left: centerX } : undefined;
 
+  // The terminal hand-off dock belongs to ONE tab, and it is `fixed` inside a
+  // portal, so nothing about its position tied it to that tab: switching to a
+  // chat left it floating over the composer, talking about a terminal that was
+  // no longer on screen.
+  //
+  // It is hidden rather than unmounted. The sign-in is still live — the CLI is
+  // mid-TUI in that terminal — so the phase, its command and its "I've
+  // finished" handler all have to survive the trip to another tab and back.
+  //
+  // Only `"hidden"` hides it. If the tab is CLOSED the dock stays put, because
+  // then there is nowhere left to finish the login and the dock is the only
+  // thing offering a way out of it.
+  const terminalPresence = useCommandTerminalPresence(
+    phase.kind === "terminal" ? (phase.terminal ?? null) : null,
+  );
+  const dockOffScreen = phase.kind === "terminal" && terminalPresence === "hidden";
+
   return (
     <Dialog.Root
       open
@@ -477,7 +494,7 @@ function AgentOAuthModal({
       }}
     >
       <Dialog.Portal>
-        {!docked && <DialogOverlay className="backdrop-blur-sm" />}
+        {!docked && <DialogOverlay blur />}
         {docked ? (
           <Dialog.Popup
             // Never take the keyboard: the terminal behind this is what the
@@ -485,7 +502,13 @@ function AgentOAuthModal({
             // used to sit here are now reasons handled on the Root's
             // onOpenChange.
             initialFocus={false}
-            className="fixed bottom-12 left-1/2 z-modal max-w-[92vw] -translate-x-1/2"
+            className={cn(
+              "fixed bottom-12 left-1/2 z-modal max-w-[92vw] -translate-x-1/2",
+              // `hidden` and not an opacity fade: the dock must leave the
+              // accessibility tree and stop taking pointer events while the
+              // user is on another tab, not merely stop being visible.
+              dockOffScreen && "hidden",
+            )}
             style={centred}
           >
             <SignInDock label={label}>

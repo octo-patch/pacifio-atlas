@@ -6,12 +6,14 @@ import { toast } from "sonner";
 import { useChatStore } from "../stores/chat-store";
 import { respondAndPopPermission, type PermissionAnswer } from "../lib/respond-permission";
 import { cn } from "@/lib/utils";
+import { CONTENT_COLUMN } from "../lib/row-metrics";
 import { Kbd } from "@/ui/kbd";
 import { Markdown } from "@/lib/markdown";
 import { extractPlanMarkdown } from "../lib/plans";
 import { exitPlanOffersBypass } from "../lib/exit-plan-modes";
 import { composeAnswers, extractQuestions } from "../lib/questions";
 import { ApprovalCard, type Answer } from "./approval-card";
+import { ComposerDrawer } from "./composer-drawer";
 import type { PermissionOptionRef, PendingPermission } from "@/types/acp";
 import { type AgentType } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
@@ -58,8 +60,7 @@ interface PermissionModalProps {
 /**
  * Renders the head of the pending-permission queue for whichever ACP session
  * is bound to this tab. The standard case is an inline card (numbered options,
- * keyboard-selectable, with a free-text fallback) pinned above the composer,
- * à la Claude Code / VSCode. Plan reviews keep the richer two-panel modal.
+ * keyboard-selectable, with a free-text fallback) pinned above the composer. Plan reviews keep the richer two-panel modal.
  * Cancelled requests (ESC / click outside) resolve as `cancelled` on the wire
  * so the agent backs off correctly.
  */
@@ -256,7 +257,7 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
     return (
       <Dialog.Root open onOpenChange={(open) => !open && cancel()}>
         <Dialog.Portal>
-          <DialogOverlay className="backdrop-blur-sm" />
+          <DialogOverlay blur />
           <Dialog.Popup
             className={cn(
               // Anchor near the top (not vertically centered) with a viewport
@@ -335,26 +336,26 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
   // Esc still backs out via this modal's keyboard handler.
   if (questions) {
     return (
-      <div className="px-4 pt-2">
+      <ComposerDrawer>
         <ApprovalCard
           key={current.requestId}
           questions={questions}
           queueNote={queueNote}
           onSubmit={submitQuestionAnswers}
         />
-      </div>
+      </ComposerDrawer>
     );
   }
 
   // Standard case — inline card above the composer.
   return (
-    <div className="px-4 pt-2">
+    <div className={cn(CONTENT_COLUMN, "pt-2")}>
       <div
         // A card resting in the composer stack, not a menu: `shadow-md` is the
         // menu elevation (0 16px 48px at 90%) and read as a black slab over the
         // transcript. This sits between `shadow-sm` and that, with no step to name.
         // ratchet-allow: an in-flow raised card, softer than the menu elevation
-        className="mx-auto w-full max-w-[720px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+        className="w-full overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
       >
         <div className="flex items-start gap-2 px-3 pt-3">
           <div className="flex-1 min-w-0">
@@ -449,11 +450,7 @@ function PermissionOption({
       )}
       <Icon className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 font-medium break-words">{label}</span>
-      {isPrimary && (
-        <Kbd className="border-[var(--background)]/20 bg-[var(--background)]/10 text-[var(--background)]">
-          ↵
-        </Kbd>
-      )}
+      {isPrimary && <Kbd variant="inverse">↵</Kbd>}
     </button>
   );
 }

@@ -106,19 +106,66 @@ export function ApprovalCard({
     });
   };
 
-  // Keyboard: digits pick/toggle options, Enter advances/submits. Esc is the
-  // permission modal's job (it owns cancel), so it is deliberately not here.
+  const goBack = useCallback(() => {
+    clearAdvance();
+    setStep((s) => Math.max(0, s - 1));
+  }, [clearAdvance]);
+
+  // Keyboard: digits pick/toggle options, ↑/↓ walk the options (focus, so
+  // Space or Enter on one is the button's own press), ←/→ move between the
+  // questions (→ only once this one is answered, as the arrow button is), and
+  // Enter advances/submits. Esc is the permission modal's job (it owns
+  // cancel), so it is deliberately not here.
+  const optionsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const inText = document.activeElement === inputRef.current;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const active = document.activeElement;
+      const inText = active === inputRef.current;
+      const options = Array.from(
+        optionsRef.current?.querySelectorAll<HTMLButtonElement>("[data-option]") ?? [],
+      );
+      const onOption = options.findIndex((b) => b === active);
       if (e.key === "Enter") {
+        // A focused option takes its own Enter (a press); the card takes the rest.
+        if (onOption >= 0) return;
         if (inText || isAnswered(answer)) {
           e.preventDefault();
           goNext();
         }
         return;
       }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        // In the text field the arrows move the caret; a question only moves
+        // from its edges.
+        if (inText) {
+          const input = inputRef.current!;
+          const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+          const atEnd = input.selectionStart === input.value.length;
+          if (e.key === "ArrowLeft" ? !atStart : !atEnd) return;
+        }
+        if (e.key === "ArrowLeft" && step > 0) {
+          e.preventDefault();
+          goBack();
+        } else if (e.key === "ArrowRight" && isAnswered(answer)) {
+          e.preventDefault();
+          goNext();
+        }
+        return;
+      }
       if (inText) return;
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && options.length > 0) {
+        e.preventDefault();
+        const dir = e.key === "ArrowDown" ? 1 : -1;
+        const next =
+          onOption < 0
+            ? dir > 0
+              ? 0
+              : options.length - 1
+            : (onOption + dir + options.length) % options.length;
+        options[next].focus();
+        return;
+      }
       const n = parseInt(e.key, 10);
       if (!Number.isNaN(n) && n >= 1 && n <= q.options.length) {
         e.preventDefault();
@@ -129,27 +176,49 @@ export function ApprovalCard({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answer, q, step, goNext]);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [answer, q, step, goNext, goBack]);
 
   return (
     <div
-      // A card resting in the composer stack, not a menu: `shadow-md` is the
-      // menu elevation (0 16px 48px at 90%) and read as a black slab over the
-      // transcript. This sits between `shadow-sm` and that, with no step to name.
-      // ratchet-allow: an in-flow raised card, softer than the menu elevation
-      className="mx-auto w-full max-w-[720px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+      // Inset from the 720px column the composer and transcript share, so the
+      // question reads as a thing resting ON the conversation rather than as
+      // another row of it. Wide enough that an option's label and its
+      // description still sit on one line each, which is what the narrower
+      // version cost.
+      //
+      // `--popover`, not `--card`: this sits directly on the composer, whose
+      // field is `--background`, and `--card` is only one step from it in
+      // either appearance — close enough that the two read as one surface with
+      // a line through it. `--popover` is the lifted tone the rest of the
+      // chrome uses when something sits above something else, and it is the
+      // step that makes the card legible against the composer in both.
+      //
+      // The menu elevation (`shadow-md`), which every theme defines for its
+      // own appearance. The hand-written black shadow it replaces was tuned
+      // for one dark theme and painted a grey smear under the card on light
+      // ones, and a heavier one than any menu on dark.
+      data-approval-card
+      className="mx-auto w-full max-w-[650px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--popover)] shadow-md"
     >
-      <div className="px-4 pt-3.5 pb-4">
+      <div
+        // `pb-6` rather than matching `pt-3.5`: the card is deliberately
+        // bottom-heavy. Its last row is the footer's controls, and its bottom
+        // edge is tucked under the composer (see `ComposerDrawer`), so padding
+        // that looked even on its own left the next/submit button sitting on
+        // the join.
+        className="px-4 pt-3.5 pb-6"
+      >
         {/* Header: icon, question, step counter. */}
         <div className="flex items-start gap-2.5">
           <CircleHelp className="mt-0.5 size-4 shrink-0 text-[var(--muted-foreground)]" />
           <div className="min-w-0 flex-1">
-            {q.header && (
-              <div className="text-2xs uppercase tracking-[0.08em] text-[var(--muted-foreground)]">
-                {q.header}
-              </div>
-            )}
+            {/* `q.header` is deliberately not rendered. It is the question's
+                category ("Layout", "Features") and the question text below
+                already says what is being asked, so the eyebrow was a second,
+                shorter restatement sitting above it. It still travels on the
+                spec — `composeAnswers` names each answer by it when there is
+                more than one question, which is where it earns its keep. */}
             <div className="text-md font-medium leading-snug text-[var(--foreground)]">
               {q.question || "The agent has a question"}
             </div>
@@ -165,16 +234,24 @@ export function ApprovalCard({
         </div>
 
         {/* Options. */}
-        <div className="mt-3 flex flex-col gap-0.5 pl-[26px]">
+        {/* No left indent. Aligning these under the header's TEXT (past the
+            icon) cost 26px that the right-hand edge has no counterpart for, so
+            the options sat in a column noticeably further from their left
+            border than their numbers were from the right one. They now share
+            the card's own padding with everything else. */}
+        <div ref={optionsRef} className="mt-3 flex flex-col gap-0.5">
           {q.options.map((o, i) => {
             const on = answer.selected.includes(o.label);
             return (
               <button
                 key={`${o.label}-${i}`}
                 type="button"
+                data-option
+                aria-pressed={on}
                 onClick={() => (q.multiSelect ? toggle(o.label) : pick(o.label))}
                 className={cn(
-                  "flex min-h-9 w-full items-start gap-3 rounded-lg px-2 py-1.5 text-left transition-colors",
+                  "flex min-h-9 w-full items-start gap-3 rounded-lg px-2 py-1.5 text-left transition-colors outline-none",
+                  "focus-visible:bg-[var(--atlas-element-hover)] focus-visible:ring-1 focus-visible:ring-[var(--atlas-border-strong)]",
                   on ? "bg-[var(--atlas-element-active)]" : "hover:bg-[var(--atlas-element-hover)]",
                 )}
               >
@@ -225,8 +302,11 @@ export function ApprovalCard({
               })
             }
             placeholder={q.options.length > 0 ? "Answer in your own words…" : "Type your answer…"}
+            // A field, drawn as one: the hairline border is what says "type
+            // here". The translucent tint it replaces read as a darker band
+            // laid across the card rather than as an input.
             className={cn(
-              "h-10 w-full rounded-lg border-0 bg-[var(--background)]/70 px-3 text-base text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:bg-[var(--background)]",
+              "h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 text-base text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:border-[var(--atlas-border-strong)]",
               q.options.length > 0 && "mt-1.5",
             )}
           />
@@ -234,15 +314,12 @@ export function ApprovalCard({
 
         {/* Footer: back, dots, next/submit. */}
         <HintGroup side="top">
-          <div className="mt-4 flex items-center gap-3 pl-[26px]">
+          <div className="mt-5 flex items-center gap-3">
             <HintItem label="Previous question">
               <button
                 type="button"
                 disabled={step === 0}
-                onClick={() => {
-                  clearAdvance();
-                  setStep((s) => Math.max(0, s - 1));
-                }}
+                onClick={goBack}
                 className={cn(
                   "grid size-8 place-items-center rounded-full transition-colors",
                   step === 0
@@ -296,7 +373,7 @@ export function ApprovalCard({
                   "flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors",
                   isAnswered(answer)
                     ? "cursor-pointer bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--atlas-primary-hover)]"
-                    : "cursor-default bg-[var(--background)] text-[var(--atlas-text-disabled)]",
+                    : "cursor-default bg-[var(--atlas-element-hover)] text-[var(--atlas-text-disabled)]",
                 )}
               >
                 {last && questions.length > 1 && <span>Submit</span>}

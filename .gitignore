@@ -13,7 +13,11 @@ dist-next/
 target/
 
 # IDE
-.vscode/
+# Per-developer editor state stays out; the shared settings and extension
+# recommendations are committed.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
@@ -39,18 +43,27 @@ skills-lock.json
 # pointed at.
 *.md
 !README.md
+!CLAUDE.md
+# A symlink to CLAUDE.md, for the agents that read AGENTS.md instead.
+# Atlas's instruction sync leaves a linked AGENTS.md alone.
+!AGENTS.md
 !TELEMETRY.md
 !CONTRIBUTING.md
-!ARCHITECTURE.md
 !.github/SECURITY.md
 !.github/CODE_OF_CONDUCT.md
 !CONTEXT.md
+!docs/architecture.md
+# The map of docs/ itself.
+!docs/README.md
 !docs/adr/*.md
 !docs/archive/*.md
 !docs/archive/radix-to-base-ui/*.md
 !docs/research/*.md
 !docs/qa/*.md
 !docs/reference/*.md
+# How agents file and label Linear work; CLAUDE.md points every session here.
+!docs/agents/issue-tracker.md
+!docs/agents/linear-reference.md
 # Requests to other teams (the server team's gateway changes): the desktop
 # code cites them, so they have to be in the repo it lives in.
 !docs/requests/*.md
@@ -58,6 +71,9 @@ skills-lock.json
 # the binary at compile time (`commands/skills.rs`), so it has to ship from a
 # fresh clone the same way the vendored Atlas Agent prompts below do.
 !src-tauri/resources/**/*.md
+# Third-party notices that travel with what we took from them (Apache-2.0
+# §4(d)), e.g. the Pierre syntax colours in the Atlas theme.
+!crates/atlas-theme/third-party/**/*.md
 graphify-out/
 # Local-only working folders (plans/specs + helper scripts)
 plans/

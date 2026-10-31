@@ -61,8 +61,12 @@ const TOP_FADE = 36;
 
 export const CommsConversation = memo(function CommsConversation({
   conv,
+  showBack = true,
 }: {
   conv: ChatConversation;
+  /** The header's "Back to chats". Off beside the split view's sidebar,
+   *  which is the way back. */
+  showBack?: boolean;
 }) {
   const me = useCommsStore.use.me();
   const memberList = useCommsStore.use.members();
@@ -278,7 +282,7 @@ export const CommsConversation = memo(function CommsConversation({
         me={me}
         pinnedCount={pinnedCount}
         onJumpToMessage={jumpToMessage}
-        onBack={actions.goHome}
+        onBack={showBack ? actions.goHome : undefined}
       />
 
       <SubTabStrip
@@ -331,7 +335,13 @@ export const CommsConversation = memo(function CommsConversation({
               onScroll={onScroll}
               className="min-h-0 flex-1 overflow-y-auto hide-scrollbar [overflow-anchor:none]"
             >
-              <div ref={content} style={{ paddingTop: TOP_FADE / 2, paddingBottom: 10 }}>
+              {/* `px-4`: the column's gutter, so avatars, date rules and call
+                  rows sit off the pane's edge rather than against it. */}
+              <div
+                ref={content}
+                className="px-4"
+                style={{ paddingTop: TOP_FADE / 2, paddingBottom: 10 }}
+              >
                 {messages.length === 0 && (loading || (!hydrated && !loadError)) ? (
                   <TranscriptSkeleton />
                 ) : messages.length === 0 && loadError ? (
@@ -476,7 +486,7 @@ function SubTabStrip({
   ];
   return (
     <div className="flex h-[36px] shrink-0 items-center gap-0.5 border-b border-border px-2">
-      {tabs.map(({ id, label, icon: Icon }) => (
+      {tabs.map(({ id, label, icon: TabIcon }) => (
         <button
           key={id}
           type="button"
@@ -488,7 +498,7 @@ function SubTabStrip({
               : "text-muted-foreground hover:text-secondary-foreground",
           )}
         >
-          <Icon size={11} className="shrink-0 opacity-80" />
+          <TabIcon size={11} className="shrink-0 opacity-80" />
           {label}
           {active === id && (
             <span className="absolute inset-x-2 bottom-0 h-[1.5px] rounded-full bg-foreground" />
@@ -529,7 +539,8 @@ function ConversationHeader({
   me: string;
   pinnedCount: number;
   onJumpToMessage: (id: string) => void;
-  onBack: () => void;
+  /** Absent: no back button (the split view's sidebar is the way back). */
+  onBack?: () => void;
 }) {
   const isChannel = conv.kind === "channel";
   const isGroup = conv.kind === "group_dm";
@@ -545,15 +556,17 @@ function ConversationHeader({
     // shoving the buttons off the edge.
     <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-border px-2">
       {/* Back to the tab's home view — the panel has no sidebar to fall back on. */}
-      <Hint label="Back to chats">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
-        >
-          <ChevronLeft size={15} />
-        </button>
-      </Hint>
+      {onBack ? (
+        <Hint label="Back to chats">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
+          >
+            <ChevronLeft size={15} />
+          </button>
+        </Hint>
+      ) : null}
 
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {isChannel ? (
@@ -669,7 +682,7 @@ function ConversationIntro({
       </div>
       <p className="mt-0.5 text-xs leading-relaxed text-disabled">
         {isChannel
-          ? "This is the beginning of the channel. Anyone in the organisation can be invited, and an invitee sees the full history."
+          ? "This is the beginning of the channel. Anyone in the organization can be invited, and an invitee sees the full history."
           : conv.kind === "group_dm"
             ? "Group membership is fixed for the life of the conversation — adding someone means starting a new group."
             : "This conversation is between the two of you."}

@@ -365,11 +365,19 @@ async fn a_turn_is_a_status_flip_and_a_terminal() {
         SessionDelta::TurnFinished {
             stop_reason,
             turn_seq,
+            started_at_ms,
+            ended_at_ms,
+            worked_ms,
         } => {
             // The token the frontend matches on, serialized rather than
             // hand-formatted (ATL-6 shipped "endturn").
             assert_eq!(stop_reason, "end_turn");
             assert_eq!(*turn_seq, 7);
+            // The turn's wall time travels with its terminal, so the client
+            // never has to time it itself.
+            let (started, ended) = (started_at_ms.unwrap(), ended_at_ms.unwrap());
+            assert!(started <= ended, "{started} > {ended}");
+            assert!(worked_ms.is_some(), "timed on the monotonic clock");
         }
         other => panic!("expected a terminal, got {other:?}"),
     }
@@ -832,6 +840,41 @@ fn a_snapshot_carries_the_whole_conversation_including_the_user() {
     assert_eq!(ids.len(), messages.len());
 }
 
+/// ACP carries no per-message time, so what an agent's `session/load` replays
+/// is stamped when Atlas heard it. The wire says so, live and in snapshots,
+/// until the user speaks again; from there messages are timed for real.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replayed_message_says_its_time_is_approximate() {
+    let harness = Harness::start();
+
+    lock(&harness.thread).begin_replay();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "user_message_chunk",
+        "content": { "type": "text", "text": "fix the bug" },
+    }));
+    harness.update(text_chunk("found it"));
+    harness.expect(1);
+    match &harness.recorder.deltas()[0] {
+        SessionDelta::MessageAppended { message } => assert!(message.timestamp_approximate),
+        other => panic!("expected a message, got {other:?}"),
+    }
+
+    lock(&harness.thread).push_user_content_block(
+        None,
+        acp::ContentBlock::Text(acp::TextContent::new("and the test".to_string())),
+    );
+    harness.update(text_chunk("added"));
+    harness.expect(2);
+    match &harness.recorder.deltas()[1] {
+        SessionDelta::MessageAppended { message } => assert!(!message.timestamp_approximate),
+        other => panic!("expected a message, got {other:?}"),
+    }
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let approximate: Vec<bool> = messages.iter().map(|m| m.timestamp_approximate).collect();
+    assert_eq!(approximate, [true, true, false, false]);
+}
+
 // ------------------------------------------------------- terminal tool calls
 
 /// `echo`, wherever this platform keeps it.
@@ -942,8 +985,7 @@ async fn terminal_output_still_names_its_block_on_the_wire() {
 async fn growing_terminal_output_re_projects_the_tool_call() {
     // Live streaming. A terminal's output grows on its own, long after the
     // tool call that references it was announced — nothing else about the
-    // thread changes. Zed gets this free: its terminal is an entity the view
-    // holds, so notifying it re-renders the tool call. Atlas's terminals reach
+    // thread changes. Atlas's terminals reach
     // the UI only through the tool call's projection, so without an explicit
     // link the output pane shows whatever happened to be buffered when some
     // unrelated event last re-projected the entry.
@@ -951,7 +993,7 @@ async fn growing_terminal_output_re_projects_the_tool_call() {
 
     // The terminal must exist before the agent can reference it: the id comes
     // from `terminal/create`, and the thread rejects a block naming an unknown
-    // one (as Zed's `ToolCallContent::from_acp` does).
+    // one.
     create_terminal(&harness, "term-3", &["first"]).await;
     harness.update(terminal_tool_call("call-3", "term-3"));
     harness.expect(1);
@@ -1170,13 +1212,14 @@ async fn a_growing_display_only_terminal_streams_only_its_tail() {
     }
 }
 
-/// The guard on the cheap path. Once the buffer starts dropping its front, a
-/// byte offset from an earlier read names different bytes than it did — and
-/// `terminal_output` prefixes a truncation marker, which moves everything
-/// again. Streaming a tail against that offset would ship garbage, so the
-/// projection has to fall back to announcing the whole tool call.
+/// Past the byte limit the buffer drops its front — and the tail must keep
+/// streaming. Offsets are in the command's total output, so a window that has
+/// moved on still serves "what came after what you last saw"; before this, a
+/// terminal that truncated once re-announced its whole megabyte window on every
+/// later chunk — the ATL-219 cost, back, for exactly the long builds that
+/// motivated the cheap path. The user's pane keeps the complete output.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_truncating_terminal_falls_back_to_a_whole_snapshot() {
+async fn a_truncating_terminal_keeps_streaming_its_tail() {
     let harness = Harness::start();
 
     lock(&harness.thread).on_terminal_provider_event(
@@ -1194,23 +1237,97 @@ async fn a_truncating_terminal_falls_back_to_a_whole_snapshot() {
     let before = harness.recorder.len();
 
     push_output(&harness, "term-trunc", b"ABCD");
+    push_output(&harness, "term-trunc", b"EF");
 
     let new = since(&harness, before);
-    let result = match new.last() {
+    let tails: Vec<String> = new
+        .iter()
+        .map(|d| match d {
+            SessionDelta::ToolCallOutputChunk { delta, .. } => delta.clone(),
+            other => panic!("a truncated buffer must still stream its tail, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(tails, ["ABCD", "EF"], "each chunk is exactly the new bytes");
+}
+
+/// The honesty the old fallback existed for is kept where it matters: a
+/// projection that has to be REBUILT (here, the first look at a terminal that
+/// already dropped its front) says so, and shows the window it has.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rebuilt_result_admits_what_the_buffer_dropped() {
+    let harness = Harness::start();
+
+    lock(&harness.thread).on_terminal_provider_event(
+        atlas_acp_thread::TerminalProviderEvent::Created {
+            terminal_id: acp::TerminalId::new("term-late"),
+            label: "agent-run".into(),
+            cwd: None,
+            output_byte_limit: Some(8),
+            terminal: None,
+        },
+    );
+    push_output(&harness, "term-late", b"12345678ABCD");
+    harness.update(terminal_tool_call("call-late", "term-late"));
+    harness.expect(1);
+
+    let result = match harness.recorder.deltas().last() {
         Some(SessionDelta::ToolCallUpserted { tool_call, .. }) => tool_call
             .result
             .clone()
             .expect("the tool call carries its output"),
-        other => panic!("a truncated buffer must re-announce the whole call, got {other:?}"),
+        other => panic!("expected the first snapshot, got {other:?}"),
     };
     assert!(
         result.starts_with("[earlier output dropped]"),
-        "the wire has to admit the buffer dropped its front: {result:?}"
+        "a rebuilt result has to admit the buffer dropped its front: {result:?}"
     );
     assert!(
         result.ends_with("5678ABCD"),
         "the retained window is the most recent bytes: {result:?}"
     );
+
+    // And from there the tail streams, in the same coordinates.
+    let before = harness.recorder.len();
+    push_output(&harness, "term-late", b"EF");
+    match since(&harness, before).as_slice() {
+        [SessionDelta::ToolCallOutputChunk { delta, .. }] => assert_eq!(delta, "EF"),
+        other => panic!("the tail after a rebuilt result still streams, got {other:?}"),
+    }
+}
+
+/// A status change on a command past the byte limit must not swap the output
+/// the user has been reading for the window plus a marker.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_status_change_past_the_limit_keeps_the_streamed_output() {
+    let harness = Harness::start();
+
+    lock(&harness.thread).on_terminal_provider_event(
+        atlas_acp_thread::TerminalProviderEvent::Created {
+            terminal_id: acp::TerminalId::new("term-done"),
+            label: "agent-run".into(),
+            cwd: None,
+            output_byte_limit: Some(8),
+            terminal: None,
+        },
+    );
+    push_output(&harness, "term-done", b"12345678");
+    harness.update(terminal_tool_call("call-done", "term-done"));
+    harness.expect(1);
+    push_output(&harness, "term-done", b"ABCD");
+    let before = harness.recorder.len();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-done",
+        "status": "completed",
+    }));
+    harness.pump();
+
+    let result = match since(&harness, before).last() {
+        Some(SessionDelta::ToolCallUpserted { tool_call, .. }) => tool_call.result.clone(),
+        other => panic!("a status change re-announces the call, got {other:?}"),
+    };
+    assert_eq!(result.as_deref(), Some("12345678ABCD"));
 }
 
 /// Output arrives as bytes, and a chunk boundary can land in the middle of a
@@ -1645,6 +1762,25 @@ async fn a_growing_terminal_costs_the_tail() {
     );
 }
 
+/// The same bound past the default byte limit. 16 000 chunks of 200 bytes is
+/// 3.2 MB against a 1 MiB window, so two thirds of the chunks arrive after the
+/// buffer has started dropping its front — where every chunk used to rebuild
+/// and re-ship the whole window.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "timing, not correctness"]
+async fn a_terminal_past_its_byte_limit_still_costs_the_tail() {
+    let under = time_terminal_projection(4_000, 200).await;
+    let over = time_terminal_projection(16_000, 200).await;
+    let ratio = over.as_secs_f64() / under.as_secs_f64();
+    println!(
+        "terminal past limit: 4000 chunks {under:?}, 16000 chunks {over:?}, ratio {ratio:.2} (linear is 4)"
+    );
+    assert!(
+        ratio < 8.0,
+        "four times the output, across the byte limit, cost {ratio:.1}x the time"
+    );
+}
+
 /// ATL-223, the same shape one file over: streamed assistant text used to be
 /// rebuilt, compared and cloned in full on every token.
 #[tokio::test(flavor = "multi_thread")]
@@ -1668,4 +1804,585 @@ async fn streamed_text_costs_the_tail() {
         ratio < 10.0,
         "five times the text cost {ratio:.1}x the time; streaming is still superlinear"
     );
+}
+
+// ----------------------------------------------------------------- subagents
+//
+// ACP has no subagent concept: every one of these is an ordinary tool call
+// plus `rawInput` and `_meta`, which is what `atlas_acp_thread::subagent`
+// reads. The unit tests there cover each agent's vocabulary; these drive the
+// whole path — thread, projection, wire — in one agent's words each, so that
+// what the detector recognises actually reaches a client.
+
+fn subagents(harness: &Harness) -> Vec<atlas_agent_delta::Subagent> {
+    harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::SubagentUpserted { subagent } => Some(subagent),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A launch named by its tool, with its children attributed by a vendor
+/// `_meta` parent key — the shape Claude Code and Devin both use.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_named_launch_becomes_a_subagent_and_its_work_nests_under_it() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "toolu_parent",
+        "title": "Review the auth module",
+        "kind": "think",
+        "status": "in_progress",
+        "rawInput": {
+            "description": "Review the auth module",
+            "prompt": "Read src/auth and report back.",
+            "subagent_type": "code-reviewer",
+        },
+        "_meta": { "claudeCode": { "toolName": "Task" } },
+    }));
+    harness.pump();
+
+    let launched = subagents(&harness);
+    let child = launched.last().expect("a subagent was announced");
+    assert_eq!(child.tool_call_id, "toolu_parent");
+    assert_eq!(child.name, "Review the auth module");
+    assert_eq!(child.role.as_deref(), Some("code-reviewer"));
+    assert_eq!(
+        child.prompt.as_deref(),
+        Some("Read src/auth and report back.")
+    );
+    assert_eq!(child.status, atlas_agent_delta::SubagentStatus::Running);
+    assert_eq!(child.tool_call_count, 0, "it has not done anything yet");
+
+    // The child reads a file. Same session, same stream as the parent's own
+    // work — only the meta tells them apart.
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "toolu_child",
+        "title": "Read src/auth.rs",
+        "kind": "read",
+        "status": "in_progress",
+        "_meta": { "claudeCode": { "parentToolUseId": "toolu_parent" } },
+    }));
+    harness.pump();
+
+    let nested = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .find_map(|delta| match delta {
+            SessionDelta::ToolCallUpserted { tool_call, .. } if tool_call.id == "toolu_child" => {
+                Some(tool_call)
+            }
+            _ => None,
+        })
+        .expect("the child's call reached the wire");
+    assert_eq!(
+        nested.parent_tool_call_id.as_deref(),
+        Some("toolu_parent"),
+        "a child's call names the launch it belongs to"
+    );
+    assert_eq!(
+        subagents(&harness)
+            .last()
+            .expect("an update")
+            .tool_call_count,
+        1,
+        "the launch counts its child's work"
+    );
+
+    // It finishes.
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "toolu_parent",
+        "status": "completed",
+        "content": [{ "type": "content", "content": { "type": "text", "text": "No issues found." } }],
+    }));
+    harness.pump();
+
+    let done = subagents(&harness).pop().expect("a terminal update");
+    assert_eq!(done.status, atlas_agent_delta::SubagentStatus::Completed);
+    assert_eq!(done.result.as_deref(), Some("No issues found."));
+    assert!(done.ended_at_ms.is_some(), "a finished child is stamped");
+}
+
+/// A launch that is itself the whole child (Claude's synchronous `Agent`)
+/// ends when that call does — not when it was created, which is all the
+/// thread remembers of it. Live, every such child read "done 0s".
+#[tokio::test(flavor = "multi_thread")]
+async fn a_child_that_finishes_later_states_how_long_it_ran() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "toolu_counter",
+        "title": "counter",
+        "kind": "think",
+        "status": "in_progress",
+        "rawInput": { "description": "counter", "prompt": "Count the files." },
+        "_meta": { "claudeCode": { "toolName": "Agent" } },
+    }));
+    harness.pump();
+    let started = subagents(&harness).last().expect("announced").started_at_ms;
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "toolu_counter",
+        "status": "completed",
+        "content": [{ "type": "content", "content": { "type": "text", "text": "92" } }],
+    }));
+    harness.pump();
+
+    let done = subagents(&harness).pop().expect("a terminal update");
+    let ended = done.ended_at_ms.expect("a finished child is stamped");
+    assert!(
+        ended - started >= 1000,
+        "it ran for over a second, not {}ms",
+        ended - started
+    );
+
+    // A later, unrelated change re-derives every child; the end it was given
+    // must survive that rather than fall back to its launch time.
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "toolu_other",
+        "title": "Read README.md",
+        "kind": "read",
+        "status": "completed",
+    }));
+    harness.pump();
+    let all = subagents(&harness);
+    let latest = all
+        .iter()
+        .rev()
+        .find(|s| s.tool_call_id == "toolu_counter")
+        .expect("still announced");
+    assert_eq!(latest.ended_at_ms, Some(ended));
+}
+
+/// A reopened session: the launch and its result are replayed back to back,
+/// so the thread's clock says the child took no time. The child's own report
+/// is the duration, and its count of the work this session never saw.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replayed_child_keeps_the_time_and_work_it_reported() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "toolu_counter",
+        "title": "counter",
+        "kind": "think",
+        "status": "pending",
+        "rawInput": { "description": "counter", "subagent_type": "Explore", "prompt": "Count." },
+        "_meta": { "claudeCode": { "toolName": "Agent" } },
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "toolu_counter",
+        "status": "completed",
+        "rawOutput": [{
+            "type": "text",
+            "text": "There are 92 files.\nagentId: a1\n<usage>subagent_tokens: 27872\ntool_uses: 2\nduration_ms: 17145</usage>",
+        }],
+        "_meta": { "claudeCode": { "toolName": "Agent" } },
+    }));
+    harness.pump();
+
+    let done = subagents(&harness).pop().expect("announced");
+    assert_eq!(done.status, atlas_agent_delta::SubagentStatus::Completed);
+    assert_eq!(
+        done.ended_at_ms.expect("stamped") - done.started_at_ms,
+        17145,
+        "the child's own clock, not the replay's"
+    );
+    assert_eq!(done.tool_call_count, 2, "work the replay never showed");
+}
+
+/// An agent that models children as a tree reports each thing it does to one
+/// as its own call. The child's identity is its path, so several calls
+/// collapse into one row.
+#[tokio::test(flavor = "multi_thread")]
+async fn lifecycle_calls_for_one_child_collapse_into_one_subagent() {
+    let harness = Harness::start();
+
+    let step = |id: &str, title: &str, kind: &str, status: &str| {
+        serde_json::json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": id,
+            "title": title,
+            "kind": "other",
+            "status": status,
+            "rawInput": {
+                "agentPath": "/root/ui_test_one",
+                "agentThreadId": "thr_1",
+                "activityKind": kind,
+            },
+        })
+    };
+
+    harness.update(step(
+        "c1",
+        "Start subagent Ui test one",
+        "started",
+        "completed",
+    ));
+    harness.pump();
+    let after_start = subagents(&harness);
+    let child = after_start.last().expect("a subagent");
+    assert_eq!(child.name, "Ui test one", "named from its agent path");
+    assert_eq!(child.tool_call_id, "c1");
+
+    harness.update(step(
+        "c2",
+        "Complete subagent Ui test one",
+        "completed",
+        "completed",
+    ));
+    harness.pump();
+
+    let all = subagents(&harness);
+    let ids: std::collections::BTreeSet<_> = all.iter().map(|s| s.tool_call_id.clone()).collect();
+    assert_eq!(
+        ids,
+        ["c1".to_owned()].into_iter().collect(),
+        "both steps are the same child, keyed on its agent path"
+    );
+}
+
+/// An agent that names its delegation tool something Atlas has never seen,
+/// but whose input says what it is — the Copilot shape, and the reason the
+/// detector reads evidence rather than a table of tool names.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_launch_is_recognised_from_its_input_alone() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-x",
+        "title": "Delegating work",
+        "kind": "other",
+        "status": "in_progress",
+        "rawInput": {
+            "agent_type": "coding-agent",
+            "description": "Fix the flaky test",
+            "prompt": "Find and fix the flake in auth_test.rs.",
+        },
+    }));
+    harness.pump();
+
+    let child = subagents(&harness).pop().expect("a subagent");
+    assert_eq!(child.name, "Fix the flaky test");
+    assert_eq!(child.role.as_deref(), Some("coding-agent"));
+}
+
+/// The guard that matters most: a phantom subagent row never completes, so an
+/// ordinary tool call must never become one.
+#[tokio::test(flavor = "multi_thread")]
+async fn ordinary_tool_calls_announce_no_subagent() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Run the tests",
+        "kind": "execute",
+        "status": "in_progress",
+        // A description and a prompt, but not a Task tool.
+        "rawInput": { "description": "Run the tests", "prompt": "cargo test" },
+    }));
+    harness.pump();
+
+    assert!(
+        subagents(&harness).is_empty(),
+        "shape alone must not read as a subagent"
+    );
+}
+
+fn tool_call_of(delta: &SessionDelta) -> &atlas_agent_delta::ToolCall {
+    match delta {
+        SessionDelta::ToolCallUpserted { tool_call, .. } => tool_call,
+        other => panic!("expected a tool call, got {other:?}"),
+    }
+}
+
+/// A call's start is stamped the first time it is seen, its end the first time
+/// it settles, and neither moves after that — which is what lets a reloaded
+/// session show the same duration the live one did.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tool_call_is_timed_from_first_sight_to_first_settling() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Bash",
+        "kind": "execute",
+        "status": "in_progress",
+        "rawInput": { "command": "ls" },
+    }));
+    harness.expect(1);
+    let first = tool_call_of(&harness.recorder.deltas()[0]).clone();
+    let started = first.started_at_ms.expect("stamped at first sight");
+    assert_eq!(first.ended_at_ms, None, "still running");
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-1",
+        "status": "completed",
+    }));
+    harness.expect(2);
+    let settled = tool_call_of(&harness.recorder.deltas()[1]).clone();
+    assert_eq!(
+        settled.started_at_ms,
+        Some(started),
+        "the start never moves"
+    );
+    let ended = settled.ended_at_ms.expect("stamped when it completed");
+    assert!(ended >= started + 5, "{ended} vs {started}");
+
+    // A later update to a finished call (a retitle) re-stamps nothing.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-1",
+        "title": "Bash (done)",
+    }));
+    harness.expect(3);
+    let later = tool_call_of(&harness.recorder.deltas()[2]).clone();
+    assert_eq!(later.started_at_ms, Some(started));
+    assert_eq!(later.ended_at_ms, Some(ended));
+
+    // And the snapshot a reloaded client hydrates from says the same.
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let call = &messages[0].tool_calls[0];
+    assert_eq!(call.started_at_ms, Some(started));
+    assert_eq!(call.ended_at_ms, Some(ended));
+}
+
+/// A call that fails, or is cancelled with its turn, has ended too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_tool_call_is_stamped_as_ended() {
+    let harness = Harness::start();
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Bash",
+        "kind": "execute",
+        "status": "in_progress",
+    }));
+    lock(&harness.thread).cancel();
+    harness.pump();
+
+    let last = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .rev()
+        .find(|delta| matches!(delta, SessionDelta::ToolCallUpserted { .. }))
+        .expect("the cancel was announced");
+    let call = tool_call_of(&last);
+    assert_eq!(call.status, atlas_agent_delta::ToolCallStatus::Failed);
+    assert!(call.ended_at_ms.is_some());
+}
+
+/// The snapshot puts each turn's wall time and stop reason on the message
+/// that ends it, so "Worked for" / "Stopped after" survives a reload.
+#[test]
+fn a_snapshot_carries_each_turns_timing_on_its_last_message() {
+    let harness = Harness::start();
+    let prompt = |text: &str| {
+        lock(&harness.thread).push_user_content_block(
+            None,
+            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+        );
+    };
+
+    prompt("first");
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Read a.rs",
+        "kind": "read",
+        "status": "completed",
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "done" },
+    }));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+
+    // A turn the user stopped before the agent said anything has no message
+    // of its own, and must not lend its time to the previous turn's reply.
+    prompt("second");
+    lock(&harness.thread).begin_turn();
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+
+    prompt("third");
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "partial" },
+    }));
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let timing: Vec<(&str, Option<u64>, Option<&str>)> = messages
+        .iter()
+        .map(|m| {
+            (
+                if m.content.is_empty() {
+                    "tool"
+                } else {
+                    m.content.as_str()
+                },
+                m.worked_ms,
+                m.stop_reason.as_deref(),
+            )
+        })
+        .collect();
+    // Two prompts with nothing between them are one user entry in the thread.
+    assert_eq!(timing.len(), 5, "{timing:?}");
+    assert_eq!(timing[0], ("first", None, None));
+    assert_eq!(
+        timing[1],
+        ("tool", None, None),
+        "only the turn's last message"
+    );
+    assert_eq!(timing[2].0, "done");
+    assert!(timing[2].1.unwrap() >= 5, "{timing:?}");
+    assert_eq!(
+        timing[2].2,
+        Some("end_turn"),
+        "the empty turn lent it nothing"
+    );
+    assert_eq!(timing[3], ("secondthird", None, None));
+    assert_eq!(timing[4].0, "partial");
+    assert!(timing[4].1.is_some());
+    assert_eq!(timing[4].2, Some("cancelled"));
+
+    // Absent rather than null on the wire, like every other optional field.
+    let json = serde_json::to_value(&messages[0]).unwrap();
+    assert!(json.get("worked_ms").is_none(), "got: {json}");
+    assert!(json.get("stop_reason").is_none(), "got: {json}");
+}
+
+fn chunk(harness: &Harness, text: &str) {
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": text },
+    }));
+}
+
+/// A rewind inside a turn (`/undo`) must not leave the open turn counting
+/// from past the end of the thread: what the turn says after the rewind is
+/// its own, and is the message its timing belongs on.
+#[test]
+fn a_turn_rewound_into_still_times_what_it_says_next() {
+    let harness = Harness::start();
+    let prompt = |text: &str| {
+        lock(&harness.thread).push_user_content_block(
+            None,
+            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+        );
+    };
+
+    prompt("first");
+    lock(&harness.thread).begin_turn();
+    chunk(&harness, "first reply");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+
+    prompt("/undo");
+    lock(&harness.thread).begin_turn();
+    // The rewind takes the first exchange and the prompt back …
+    lock(&harness.thread).remove_entries_from(0);
+    // … and the turn then answers.
+    chunk(&harness, "undone");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    harness.pump();
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages[0].content, "undone");
+    assert!(
+        messages[0].worked_ms.is_some(),
+        "the reply after the rewind is timed"
+    );
+    assert_eq!(messages[0].stop_reason.as_deref(), Some("end_turn"));
+}
+
+/// A stop that arrives after its turn already closed — a cancel answered
+/// behind the stop it raced — is swallowed, so it cannot relabel the finished
+/// turn as stopped.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_late_duplicate_stop_does_not_relabel_a_finished_turn() {
+    let harness = Harness::start();
+    lock(&harness.thread).push_user_content_block(
+        None,
+        acp::ContentBlock::Text(acp::TextContent::new("go".to_string())),
+    );
+    lock(&harness.thread).begin_turn();
+    chunk(&harness, "done");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let finished: Vec<String> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::TurnFinished { stop_reason, .. } => Some(stop_reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished, ["end_turn"], "one terminal, the real one");
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    assert_eq!(
+        messages.last().unwrap().stop_reason.as_deref(),
+        Some("end_turn")
+    );
+}
+
+/// The terminal carries the turn it closed, not whatever the thread's newest
+/// record is when the projector gets to it: here a whole second turn runs
+/// before the first stop is drained.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_drained_late_announces_its_own_turn() {
+    let harness = Harness::start();
+    lock(&harness.thread).begin_turn();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    lock(&harness.thread).begin_turn();
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let finished: Vec<(String, u64)> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::TurnFinished {
+                stop_reason,
+                worked_ms,
+                ..
+            } => Some((stop_reason, worked_ms.unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished.len(), 2);
+    assert_eq!(finished[0].0, "end_turn");
+    assert!(finished[0].1 >= 30, "{finished:?}");
+    assert_eq!(finished[1].0, "cancelled");
+    assert!(finished[1].1 < 30, "{finished:?}");
 }

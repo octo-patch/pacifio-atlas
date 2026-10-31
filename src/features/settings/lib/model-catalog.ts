@@ -34,7 +34,7 @@ const PREFERRED: Record<string, string[]> = {
     "anthropic/claude-sonnet-4.6",
     "google/gemini-3.1-pro",
     "qwen/qwen3-coder",
-    "minimax/minimax-m3.1-flash:free",
+    "minimax/minimax-m3.1-flash",
     "minimax/minimax-m3",
   ],
   perplexity: ["sonar-reasoning-pro", "sonar-pro"],

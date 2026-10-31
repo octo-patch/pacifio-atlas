@@ -10,6 +10,7 @@
 
 <a href="https://trendshift.io/repositories/56020?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-56020" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/56020" alt="pacifio%2Fatlas | Trendshift" width="250" height="55"/></a>
 <a href="https://trendshift.io/repositories/56020?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-56020" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/56020/daily?language=Rust" alt="pacifio%2Fatlas | Trendshift" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/56020?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-56020" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/56020/weekly?language=Rust" alt="pacifio%2Fatlas | Trendshift" width="250" height="55"/></a>
 
 <br />
 
@@ -40,7 +41,7 @@ Run Claude Code, Codex, Atlas's own agent, or anything from the ACP registry sid
 - **One memory, every agent.** A decision Claude Code made shows up in Codex's next prompt. Plans, file changes, failures, and architecture notes are shared automatically, matched on-device against what you're asking about.
 - **Your notes are agent context.** Markdown in `.atlas/knowledge/`, plus the `CLAUDE.md` and `AGENTS.md` you already wrote, feed every agent in the project.
 - **`@` anything into a prompt.** Files, folders, symbols, branches, commits, notes, papers, and past sessions resolve locally before the prompt is sent.
-- **Local by default.** Code, notes, and sessions stay on your machine. Sign in and create an organisation when you want to sync across a team.
+- **Local by default.** Code, notes, and sessions stay on your machine. Sign in and create an organization when you want to sync across a team.
 
 ## Download
 
@@ -55,7 +56,7 @@ Grab the latest build from [tryatlas.cc](https://www.tryatlas.cc/) or the [relea
 
 Agents now write a large share of the code and keep none of the reasoning behind it. The prompt that produced a change, the tool calls it made, the approach it tried first and abandoned — all of it lives in a scrollback buffer until the buffer scrolls.
 
-What survives is a commit message, written by a model, summarising a diff. Months later that is the only record of why the code looks the way it does.
+What survives is a commit message, written by a model, summarizing a diff. Months later that is the only record of why the code looks the way it does.
 
 Three problems follow, and every editor designed before agents has all three:
 
@@ -80,7 +81,7 @@ You don't have to read the raw transcript to get the context back: select a chec
 
 Atlas runs your agents as they are, and enriches what they see.
 
-Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. Atlas Agent, the native agent, runs in-process on its own engine, a hard fork of an Apache-2.0 upstream (see `CONTEXT.md`, ADR-0003 and ADR-0011).
+Claude Code and Codex run as external subprocesses over [ACP](https://github.com/zed-industries/agent-client-protocol), the most-used, most-tested path. Atlas Agent, the native agent, runs in-process on its own engine, ported once from an Apache-2.0 project and maintained by Atlas (see `CONTEXT.md`, ADR-0003 and ADR-0011).
 
 Beyond those, Atlas can spawn any agent in the ACP registry (Cursor, OpenCode, Kilo Code, and more), pulling in each one's official binary automatically. All of them go through the same send path, so everything below applies whichever one you pick.
 
@@ -114,7 +115,7 @@ Before your message reaches the agent, Atlas assembles context around it:
 | Skills | SKILL.md files scoped globally or per project, enabled per agent by symlinking into that agent's own skills directory | [Skills](https://docs.tryatlas.cc/docs/context/skills) |
 | Packs | Install a GitHub repo of skills, subagents, commands, hooks, rules, and scripts, discovered through the skills.sh index | [Skills](https://docs.tryatlas.cc/docs/context/skills) |
 | Model chat | Talk to a model directly in its own tab, with no agent loop around it | [Chat & Sessions](https://docs.tryatlas.cc/docs/product/chat) |
-| Organisations | Sign in, create an organisation, and sync across devices and teammates | [Organisations](https://docs.tryatlas.cc/docs/organisation/organisations) |
+| Organizations | Sign in, create an organization, and sync across devices and teammates | [Organizations](https://docs.tryatlas.cc/docs/organisation/organisations) |
 
 ### Agent history
 
@@ -197,7 +198,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 
 - **Feature work targets the current version branch**, not `main`. `main` only receives a finished version branch, and that merge is the release.
 
-[ARCHITECTURE.md](ARCHITECTURE.md) covers how Atlas is built. [SECURITY.md](.github/SECURITY.md) covers reporting vulnerabilities.
+[docs/architecture.md](docs/architecture.md) covers how Atlas is built. [SECURITY.md](.github/SECURITY.md) covers reporting vulnerabilities.
 
 ---
 
@@ -206,7 +207,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 - **Your code, notes, and sessions stay on your machine.** Nothing is uploaded to run an agent.
 - **Secrets are scrubbed before anything is written to disk.** Not before upload, before persistence.
 - **Session capture is local-only by default.** The [Checkpoints](#checkpoints) record is written to `.atlas/sessions.db` and stays there. No account required, and nothing sent anywhere until you explicitly opt in to sync.
-- **Accounts are opt-in.** Sign in to create an organisation and sync across devices and teammates.
+- **Accounts are opt-in.** Sign in to create an organization and sync across devices and teammates.
 - **Anonymous usage analytics are on by default.** Coarse metadata, never code or prompts. [What's collected, and how to turn it off](TELEMETRY.md).
 
 ## Contributors

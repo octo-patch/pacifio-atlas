@@ -6,15 +6,15 @@ If you're not sure where to begin, `#dev` on [Discord](https://discord.gg/GmnFgg
 
 ## Where to start
 
-[`good first issue`](https://github.com/pacifio/atlas/labels/good%20first%20issue) and [`help wanted`](https://github.com/pacifio/atlas/labels/help%20wanted) are labelled for exactly this.
+[`good first issue`](https://github.com/pacifio/atlas/labels/good%20first%20issue) and [`help wanted`](https://github.com/pacifio/atlas/labels/help%20wanted) are labeled for exactly this.
 
 Areas where help goes furthest right now:
 
-- **Linux and Windows testing** of the production bundle — terminal font, PATH resolution, general GUI behaviour.
+- **Linux and Windows testing** of the production bundle — terminal font, PATH resolution, general GUI behavior.
 - **More ACP agents.** `atlas-acp` already speaks the wire format, so adding Gemini CLI, OpenCode, or Kilo Code is mostly plugin discovery and auth.
 - **LSP support** for diagnostics and go-to-definition in the editor.
 - **MCP server integration** for tool-call extensibility.
-- **Themes** and additional colour palettes.
+- **Themes** and additional color palettes.
 
 ## Reporting a bug
 
@@ -36,7 +36,7 @@ Open a PR directly. No issue needed for typos, clarifications, or filling in som
 
 Open an issue first, or bring it to `#feature-requests` on [Discord](https://discord.gg/GmnFggaPfP).
 
-Most Atlas features cross three layers — React UI, a Tauri command, and a workspace crate — so agreeing the approach first saves you from building something that has to be restructured. [ARCHITECTURE.md](ARCHITECTURE.md) covers how those layers fit together.
+Most Atlas features cross three layers — React UI, a Tauri command, and a workspace crate — so agreeing the approach first saves you from building something that has to be restructured. [docs/architecture.md](docs/architecture.md) covers how those layers fit together.
 
 Match the patterns already in the codebase: feature folder under `src/features/<feature>/`, Zustand store wrapped in `createSelectors`, Tailwind composed through `cn()`, IPC verbs grouped into a single `commands/<domain>.rs`. If your change doesn't fit any of them, propose the structure in the issue.
 
@@ -65,15 +65,21 @@ We suggest using [mise](https://mise.jdx.dev/) to manage Bun and Node — the re
 ```bash
 git clone git@github.com:pacifio/atlas.git
 cd atlas
+mise install     # optional, see above
 bun install
+bun run doctor   # checks your toolchain against the pins, with a fix hint for each miss
 bun run dev:app
 ```
+
+`bun run doctor` is quick and changes nothing: it compares Node, Bun and Rust with `mise.toml` and `rust-toolchain.toml`, checks the Xcode tools and git hooks, and warns about optional pieces (Docker, `cargo-sweep`) and an oversized `target/`. `dev:app` also runs `scripts/target-gc.sh` before it starts, so `target/` is tidied without `ci:local`; it only acts after a Rust upgrade or once a week, and a failure never blocks dev.
+
+The repo commits shared VS Code settings in `.vscode/` (oxc as the formatter with format on save, rust-analyzer on its own target dir so it does not fight `dev:app` for the build lock) and recommends the matching extensions; `.editorconfig` covers other editors.
 
 The first Rust compile takes a few minutes; after that, seconds. `bun run dev:app` hot-reloads the frontend on save — Rust changes need a restart.
 
 There are two ways to run a source build, and they differ in whose data they use:
 
-- **`bun run dev:app`: the dev profile.** This is the normal way to work. It runs as **Atlas Dev** (bundle identifier `dev.atlas.ide.dev`, from `src-tauri/tauri.dev.conf.json`), with its own app data dir, its own `<project>/.atlas-dev/` instead of `.atlas/`, `~/.atlas-dev/` instead of `~/.atlas/`, and `~/.config/atlas-dev/` instead of `~/.config/atlas/`. It never touches an installed Atlas's data, so it is safe beside one on the same projects. It keeps `.atlas-dev/` out of git through `.git/info/exclude` rather than your projects' `.gitignore`, and it never checks for or installs updates or refreshes the `atlas` CLI helper. A fresh dev profile starts empty: no history, settings, sign-in or knowledge notes. To start it over, `bun run clean:app:dev` wipes Atlas Dev's data only; `bun run clean:app` wipes the installed Atlas's. A bundled skill both builds ship under one name (`remember`) is installed by Atlas Dev only when it is missing, so it never overwrites the installed Atlas's copy: to try a change to one, delete it from `~/.agents/skills` first.
+- **`bun run dev:app`: the dev profile.** This is the normal way to work. It runs as **Atlas Dev** (bundle identifier `dev.atlas.ide.dev`, from `src-tauri/tauri.dev.conf.json`), with its own app data dir, its own `<project>/.atlas-dev/` instead of `.atlas/`, `~/.atlas-dev/` instead of `~/.atlas/`, and `~/.config/atlas-dev/` instead of `~/.config/atlas/`. It never touches an installed Atlas's data, so it is safe beside one on the same projects. It keeps `.atlas-dev/` out of git through `.git/info/exclude` rather than your projects' `.gitignore`, and it never checks for or installs updates. A fresh dev profile starts empty: no history, settings, sign-in or knowledge notes. To start it over, `bun run clean:app:dev` wipes Atlas Dev's data only; `bun run clean:app` wipes the installed Atlas's. A bundled skill both builds ship under one name (`remember`) is installed by Atlas Dev only when it is missing, so it never overwrites the installed Atlas's copy: to try a change to one, delete it from `~/.agents/skills` first.
 - **`bun run tauri dev` (or `cargo run`): no overlay, so the default profile, running against your real data** — the same thread history, settings and `.atlas/` directories as an installed Atlas. Use it on purpose, for example to reproduce a user's state, and not by accident.
 
 `crates/atlas-profile` derives every name from the bundle identifier the binary was built with. New code that needs Atlas's directory goes through `atlas_profile::dir_name()` / `dir_in(root)` (and `config_dir_name()` for `~/.config/atlas`), never a literal `".atlas"` or `"atlas"` (`tests/dev-profile.test.ts` checks). Switching between `cargo check` / rust-analyzer and `bun run dev:app` reruns `tauri-build` and recompiles the `atlas` crate each time, because the two pass a different `TAURI_CONFIG`; if that gets in your way, give rust-analyzer its own target dir (`rust-analyzer.cargo.targetDir`).
@@ -84,8 +90,8 @@ Other commands you'll use:
 
 ```bash
 bun run dev             # Vite only, in your browser, on a fake backend — see "UI work in the browser"
-bun run format          # oxfmt --write on src/
-bun run lint            # oxlint on src/
+bun run format          # oxfmt --write on src/, tests/, scripts/
+bun run lint            # oxlint on src/, tests/, scripts/
 ```
 
 A husky pre-commit hook runs `lint-staged` (oxfmt + oxlint on staged files) plus `bun run typecheck`, so most formatting/lint issues are caught before they ever reach CI (see Verification below).
@@ -166,7 +172,7 @@ Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
 
 ### Versioning
 
-The version lives in four places: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and the Settings "About" label in `src/features/settings/components/settings-panel.tsx`. The scripts change all four together, and refresh `Cargo.lock`'s entry for the app so CI's `--locked` builds still run.
+The version is written in three places: `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`. The scripts change all three together, and refresh `Cargo.lock`'s entry for the app so CI's `--locked` builds still run. Everything else reads it from one of those: Rust through `CARGO_PKG_VERSION`, the About screen through `getVersion()`, the DMG scripts from `tauri.conf.json`.
 
 ```bash
 bun run bump          # patch bump: 0.2.3 -> 0.2.4
@@ -174,12 +180,12 @@ bun run bump 0.3.0    # explicit version
 bun run debump        # inverse of bump
 ```
 
-Run `bun run bump` (`scripts/bump.sh`) once per release, on the version branch, before opening the PR into `main`. Never edit the four files by hand.
+Run `bun run bump` (`scripts/bump.sh`) once per release, on the version branch, before opening the PR into `main`. Never edit the three files by hand.
 
 ## Verification
 
 ```bash
-bun run lint                       # oxlint on src/
+bun run lint                       # oxlint on src/, tests/, scripts/
 bun run format:check               # oxfmt --check on src/
 bun run typecheck                  # frontend typecheck (app + test code)
 bun run test                       # frontend and cross-cutting tests
@@ -271,6 +277,14 @@ container's cache volume:
 - **Once a week**, it removes artifacts cargo hasn't used in 30 days: mostly
   old dependency versions left behind by lockfile bumps. Getting one wrong
   costs a rebuild, never a broken build.
+- **Over a size cap**, only when `ATLAS_GC_MAX_MB` is set: it removes the
+  least recently used artifacts until the dir fits. For a target dir shared
+  by several worktrees, which churns through dependency versions faster than
+  30 days can age them out. `ATLAS_GC_UNUSED_DAYS` and `ATLAS_GC_EVERY_DAYS`
+  shorten the two windows above for the same case. The main checkout's
+  `target/` sets none of them. A `target/` that is a symlink (the shared dir)
+  is only collected by the worktree wrapper, under its build lock, since
+  cargo-sweep takes no lock of its own.
 
 Both use [`cargo-sweep`](https://github.com/holmgr/cargo-sweep), which the
 container image ships with. On your machine, install it once with

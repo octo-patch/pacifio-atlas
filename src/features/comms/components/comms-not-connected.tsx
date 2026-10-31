@@ -45,12 +45,12 @@ export function CommsNotConnected({ org }: { org: Organisation | null }) {
           decoration and disabled state — left the one explanation unreadable
           against the near-black surface. */}
       <div className="relative text-sm font-medium text-foreground">
-        {org ? `${org.name} isn't connected` : "No organisation selected"}
+        {org ? `${org.name} isn't connected` : "No organization selected"}
       </div>
       <p className="relative max-w-[220px] text-xs leading-relaxed text-secondary-foreground">
         {org
-          ? "Team chat needs this organisation synced to your Atlas account."
-          : "Select an organisation to use team chat."}
+          ? "Team chat needs this organization synced to your Atlas account."
+          : "Select an organization to use team chat."}
       </p>
       {org && (
         <button
@@ -129,9 +129,7 @@ function DitherBackdrop() {
       // theme-subscription-allow: re-read on every frame rather than cached at
       // construction, and this loop never parks except while the document is
       // hidden — so a switch lands within one 80ms step with nothing to
-      // subscribe to. (`dither-field` looks identical but DOES park, under
-      // `prefers-reduced-motion`, which is why that one takes `useThemeVersion`
-      // as an effect dependency.)
+      // subscribe to.
       ctx.fillStyle = themeDerived("element.emphasis");
 
       // Wind: mostly sideways, a little lift, plus a slow phase evolution so

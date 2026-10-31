@@ -5,8 +5,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { logEvent } from "@/features/log/lib/log";
 import type { GitErrorPayload } from "../lib/git-errors";
+import { pullPreference } from "../lib/git-remote-api";
 
 /** Background-fetch outcome for one project (`atlas:git-autofetch`). */
+/** Mirror of `PullStrategy` in `commands/git_ops.rs`: how a pull reconciles a
+ *  branch that diverged from its upstream. `default` defers to git config. */
+export type PullStrategy = "default" | "rebase" | "merge";
+
+/** Mirror of `PullPreference`: what a plain pull does on a diverged branch
+ *  given git config — `ask` when git would refuse (nothing set, or
+ *  `pull.ff=only`). */
+export type PullPreference = "rebase" | "merge" | "ask";
+
+/** Why the rebase-or-merge choice is open: the branch is known to have
+ *  diverged before pulling, or a pull just failed with `divergent-branches`. */
+export type PullChoice = { kind: "diverged" } | { kind: "failed"; error: GitErrorPayload };
+
 export interface AutoFetchStatus {
   project: string;
   /** Epoch ms of the last successful fetch this session. */
@@ -16,6 +30,8 @@ export interface AutoFetchStatus {
   /** Commits the current branch is behind its upstream, measured right after
    *  a successful automatic fetch; absent on every other status. */
   behind?: number | null;
+  /** Commits it is ahead, measured with `behind`. Both > 0: diverged. */
+  ahead?: number | null;
   /** The upstream head at that moment (see `behind`). */
   remoteHead?: string | null;
 }
@@ -26,11 +42,36 @@ export interface GitFileStatus {
   staged: boolean;
 }
 
+/**
+ * `next`, or the EXISTING array when it describes the same working tree.
+ *
+ * `refresh` runs on `atlas:git-changed`, on `atlas:explorer:changed` — i.e. on
+ * every file save — on autofetch, and after every git action. Rebuilding the
+ * array each time handed a new identity to its subscribers
+ * (`file-tree`, `changes-view`, `conflicts-view`,
+ * `stashes-view`, `git-manager-panel`) whether or not anything had changed, and
+ * identity is what they re-render on: `file-tree` rebuilt its git-overlay Maps,
+ * `changes-view` re-invoked `git_diff_file` for an unchanged selection, and
+ * `conflicts-view` re-ran its load effect. Keeping the old array when the
+ * contents match turns a save into no work at all.
+ */
+export function sameFiles(prev: GitFileStatus[], next: GitFileStatus[]): GitFileStatus[] {
+  if (prev === next) return prev;
+  if (prev.length !== next.length) return next;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (a.path !== b.path || a.status !== b.status || a.staged !== b.staged) return next;
+  }
+  return prev;
+}
+
 export interface GitLogEntry {
   hash: string;
   short_hash: string;
   message: string;
   author: string;
+  email: string;
   date: string;
 }
 
@@ -193,7 +234,7 @@ function ensureGitStatusFreshListener(): void {
     useGitStore.setState((s) => {
       s.isRepo = e.payload.status.is_repo;
       s.branch = e.payload.status.branch;
-      s.files = e.payload.status.files;
+      s.files = sameFiles(s.files, e.payload.status.files);
       s.ahead = e.payload.status.ahead;
       s.behind = e.payload.status.behind;
     });
@@ -304,12 +345,13 @@ interface GitState {
   stashes: StashEntry[];
   remotes: RemoteInfo[];
   tags: string[];
-  selectedCommit: CommitDetail | null;
   inProgress: InProgress | null;
   /** Live streaming git operation (commit with hooks, later push/pull). */
   activeOp: ActiveGitOp | null;
   /** Typed git error currently shown in the error dialog. */
   errorDialog: GitErrorPayload | null;
+  /** Open rebase-or-merge prompt for a diverged pull, if any. */
+  pullChoice: PullChoice | null;
   /** Background-fetch status per project path. */
   autoFetch: Record<string, AutoFetchStatus>;
 }
@@ -327,6 +369,8 @@ interface GitActions {
     refreshStatusNow: (path?: string) => Promise<void>;
     showErrorDialog: (payload: GitErrorPayload) => void;
     dismissErrorDialog: () => void;
+    showPullChoice: (choice: PullChoice) => void;
+    dismissPullChoice: () => void;
     loadLog: (path: string) => Promise<void>;
     loadDiff: () => Promise<void>;
     listBranches: () => Promise<void>;
@@ -335,8 +379,6 @@ interface GitActions {
     loadRemotes: () => Promise<void>;
     loadTags: () => Promise<void>;
     loadInProgress: () => Promise<void>;
-    loadCommit: (sha: string) => Promise<void>;
-    clearSelectedCommit: () => void;
     /** Load everything (mount / panel open). */
     refreshAll: (path: string) => Promise<void>;
     // mutations
@@ -368,7 +410,9 @@ interface GitActions {
     /** Tell the auto-fetch scheduler which project this window shows (null:
      *  none). Fetches it if due and seeds its status. */
     setAutoFetchProject: (path: string | null) => Promise<void>;
-    pull: (rebase: boolean) => Promise<void>;
+    pull: (strategy?: PullStrategy) => Promise<void>;
+    /** Read git config to predict a plain pull on a diverged branch. */
+    pullPreference: () => Promise<PullPreference>;
     push: (forceWithLease?: boolean, followTags?: boolean) => Promise<void>;
     publishBranch: () => Promise<void>;
     remoteAdd: (name: string, url: string) => Promise<void>;
@@ -409,10 +453,10 @@ export const useGitStore = createSelectors(
         stashes: [],
         remotes: [],
         tags: [],
-        selectedCommit: null,
         inProgress: null,
         activeOp: null,
         errorDialog: null,
+        pullChoice: null,
         autoFetch: {},
         actions: {
           loadStatus: async (path) => {
@@ -439,11 +483,14 @@ export const useGitStore = createSelectors(
               set((s) => {
                 s.isRepo = snap.isRepo;
                 s.branch = snap.branch;
-                s.files = snap.files.map((f) => ({
-                  path: f.path,
-                  status: f.status,
-                  staged: f.staged,
-                }));
+                s.files = sameFiles(
+                  s.files,
+                  snap.files.map((f) => ({
+                    path: f.path,
+                    status: f.status,
+                    staged: f.staged,
+                  })),
+                );
                 s.ahead = snap.ahead;
                 s.behind = snap.behind;
                 s.branchesFull = snap.branches;
@@ -467,6 +514,14 @@ export const useGitStore = createSelectors(
           dismissErrorDialog: () =>
             set((s) => {
               s.errorDialog = null;
+            }),
+          showPullChoice: (choice) =>
+            set((s) => {
+              s.pullChoice = choice;
+            }),
+          dismissPullChoice: () =>
+            set((s) => {
+              s.pullChoice = null;
             }),
           loadLog: async (path) => {
             try {
@@ -569,22 +624,6 @@ export const useGitStore = createSelectors(
               /* ignore */
             }
           },
-          loadCommit: async (sha) => {
-            const p = repo();
-            if (!p) return;
-            try {
-              const detail = await invoke<CommitDetail>("git_show", { path: p, sha });
-              set((s) => {
-                s.selectedCommit = detail;
-              });
-            } catch {
-              /* ignore */
-            }
-          },
-          clearSelectedCommit: () =>
-            set((s) => {
-              s.selectedCommit = null;
-            }),
           refreshAll: async (path) => {
             const a = get().actions;
             // The snapshot covers status/branches/stashes/in-progress;
@@ -729,10 +768,14 @@ export const useGitStore = createSelectors(
               s.autoFetch[status.project] = status;
             });
           },
-          pull: async (rebase) => {
+          pull: async (strategy = "default") => {
             const p = repo();
             if (!p) return;
-            await invoke("git_pull", { path: p, rebase, remote: null, opId: newOpId() });
+            await invoke("git_pull", { path: p, strategy, remote: null, opId: newOpId() });
+          },
+          pullPreference: async () => {
+            const p = repo();
+            return p ? pullPreference(p) : "ask";
           },
           push: async (forceWithLease = false, followTags = false) => {
             const p = repo();

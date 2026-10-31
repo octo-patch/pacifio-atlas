@@ -64,10 +64,14 @@ const STARTERS = [
 export function SessionChatPanel({
   detail,
   projectPath,
+  remoteProjectId,
   onClose,
 }: {
   detail: Detail;
   projectPath: string;
+  /** The server Project of a shared Session, so a question about a Session
+   *  that is not on this machine is grounded on the server's copy. */
+  remoteProjectId: string | null;
   onClose: () => void;
 }) {
   const sessionId = detail.summary.id;
@@ -110,8 +114,8 @@ export function SessionChatPanel({
   }, [init, byokLoaded, loadByok]);
 
   useEffect(() => {
-    void open(sessionId, projectPath, defaultScope(detail.entries));
-  }, [open, sessionId, projectPath]);
+    void open(sessionId, projectPath, defaultScope(detail.entries), remoteProjectId);
+  }, [open, sessionId, projectPath, remoteProjectId]);
 
   /** Only used to decide whether any provider is set up at all — the picker
    *  resolves which one on its own. */
@@ -376,20 +380,13 @@ function ThreadPicker({
 
 // ── Empty states ─────────────────────────────────────────────────────────────
 
-/** Open Settings on the provider-keys section — the same deep link Memory ▸ Chat
- *  uses. Dynamically imported so the artifacts panel does not pull the layout
+/** Open Settings on Agents › Provider keys — the same deep link Memory ▸ Chat
+ *  uses. Dynamically imported so the artifacts panel does not pull the settings
  *  store into its own chunk. */
 function openProviderSettings(): void {
-  void import("@/features/layout/stores/layout-store").then(({ useLayoutStore }) => {
-    useLayoutStore.getState().actions.addTab({
-      id: "settings",
-      type: "settings",
-      title: "Settings",
-      closable: true,
-      dirty: false,
-      data: { section: "providers" },
-    });
-  });
+  void import("@/features/settings/lib/open-settings").then(({ openSettingsSection }) =>
+    openSettingsSection("agents", "provider-keys"),
+  );
 }
 
 function NeedsKey({ loaded }: { loaded: boolean }) {
@@ -539,11 +536,11 @@ function Composer({
         <ChatInput
           ref={inputRef}
           // Fixed, not conditional: `ChatInput` reads its placeholder when the
-          // CodeMirror view is built and never again, so a message that depended
+          // editor is built and never again, so a message that depended
           // on readiness froze at whatever was true on mount — "Pick a model to
           // start" stayed up long after one was picked.
           placeholder="Ask about this session…"
-          onChange={(v) => setHasText(v.trim().length > 0)}
+          onEmptyChange={(blank) => setHasText(!blank)}
           onSubmit={submit}
           enterToSend={enterToSend}
         />

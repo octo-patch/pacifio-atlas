@@ -21,7 +21,6 @@ import {
   ChevronUp,
   Search,
   X,
-  GitBranch,
   Lock,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -40,21 +39,7 @@ import { CommandInput, type CommandInputHandle } from "./command-input";
 import { TerminalStopControl } from "./terminal-stop-control";
 import { useTerminalStore } from "../stores/terminal-store";
 
-/** Compact git status for the input-area badge. */
-interface TermGit {
-  branch: string;
-  ahead: number;
-  behind: number;
-  dirty: boolean;
-}
-
-export interface RawGitStatus {
-  is_repo: boolean;
-  branch: string;
-  ahead: number;
-  behind: number;
-  files: unknown[];
-}
+export type { RawGitStatus } from "../lib/term-git";
 
 /** Non-overlapping occurrences of `q` in `lower` (both already lower-cased). */
 function countMatches(lower: string, q: string): number {
@@ -132,14 +117,18 @@ export const BlockTerminal = memo(function BlockTerminal({
     () =>
       terminalSessions.acquire(terminalKey, {
         tabId,
-        cwd: useAppStore.getState().currentProject?.path ?? "~",
+        // A tab with its own directory (a session's terminal drawer) starts
+        // there; a terminal tab follows the project.
+        cwd:
+          useTerminalStore.getState().cwds[tabId] ??
+          useAppStore.getState().currentProject?.path ??
+          "~",
       }),
     [terminalKey, tabId],
   );
   const snap = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const { blocks, altScreen, rawMode, appCursorKeys, cwd, surfaceReady, exited } = snap;
 
-  const [git, setGit] = useState<TermGit | null>(null);
   const [search, setSearch] = useState({ open: false, query: "" });
   const [matchCount, setMatchCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -188,12 +177,19 @@ export const BlockTerminal = memo(function BlockTerminal({
   // bottom. The old unconditional pin yanked the viewport back down on every
   // 16 ms flush, making it impossible to scroll up during a long command.
   const pinnedRef = useRef(true);
+  // Where the pin last put `scrollTop`. Assigning `scrollTop` dispatches a
+  // `scroll` event like a user's scroll does; the handler has to tell the two
+  // apart, or a terminal streaming output marks the app "scroll hot" on every
+  // frame — which holds its own render to the parser's slow backstop and
+  // throttles the agent chat and markdown rendering app-wide (`isScrollHot`).
+  const pinTopRef = useRef(-1);
   const onBlocksScroll = useCallback(() => {
-    markScrollHot();
     const el = scrollRef.current;
-    if (el) {
-      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-    }
+    if (!el) return;
+    if (el.scrollTop === pinTopRef.current) return;
+    pinTopRef.current = -1;
+    markScrollHot();
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   }, []);
   // Re-pin when the CONTENT grows, from a ResizeObserver — never from the
   // render path. The old effect read `scrollHeight` and wrote `scrollTop` on
@@ -209,7 +205,11 @@ export const BlockTerminal = memo(function BlockTerminal({
     const content = contentRef.current;
     if (!el || !content) return;
     const ro = new ResizeObserver(() => {
-      if (pinnedRef.current && !altScreenRef.current) el.scrollTop = el.scrollHeight;
+      if (!pinnedRef.current || altScreenRef.current) return;
+      const bottom = el.scrollHeight - el.clientHeight;
+      if (el.scrollTop === bottom) return;
+      el.scrollTop = bottom;
+      pinTopRef.current = el.scrollTop;
     });
     ro.observe(content);
     return () => ro.disconnect();
@@ -252,40 +252,7 @@ export const BlockTerminal = memo(function BlockTerminal({
     const last = blocks[blocks.length - 1];
     return !!last && last.running && last.command !== "";
   }, [blocks]);
-
-  // Resolve git status for the live cwd (reuses the project git command).
-  // Re-run when the directory changes or a command finishes (which may have
-  // mutated the tree). Debounced so a burst of output doesn't thrash git.
-  useEffect(() => {
-    if (!visible || !cwd || cwd === "~") {
-      if (!cwd || cwd === "~") setGit(null);
-      return;
-    }
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      void invoke<RawGitStatus>("git_status_fresh", { path: cwd })
-        .then((s) => {
-          if (cancelled) return;
-          setGit(
-            s.is_repo
-              ? {
-                  branch: s.branch,
-                  ahead: s.ahead,
-                  behind: s.behind,
-                  dirty: s.files.length > 0,
-                }
-              : null,
-          );
-        })
-        .catch(() => {
-          if (!cancelled) setGit(null);
-        });
-    }, 150);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [cwd, busy, visible]);
+  const caps = useMemo(() => renderCaps(blocks), [blocks]);
 
   const runCommand = useCallback((cmd: string) => session.runCommand(cmd), [session]);
   const interrupt = useCallback(() => session.interrupt(), [session]);
@@ -321,7 +288,7 @@ export const BlockTerminal = memo(function BlockTerminal({
     let count = 0;
     for (const b of blocks) {
       count += countMatches(b.command.toLowerCase(), q);
-      const cap = b.running ? LIVE_RENDER_LINES : FINISHED_RENDER_LINES;
+      const cap = caps.get(b.id) ?? LIVE_RENDER_LINES;
       const lines = b.lines.length > cap ? b.lines.slice(-cap) : b.lines;
       for (const line of lines) {
         let text = "";
@@ -330,7 +297,7 @@ export const BlockTerminal = memo(function BlockTerminal({
       }
     }
     setMatchCount(count);
-  }, [search.query, blocks]);
+  }, [search.query, blocks, caps]);
 
   const navMatch = useCallback((dir: 1 | -1) => {
     const els = scrollRef.current?.querySelectorAll<HTMLElement>("[data-term-match]");
@@ -431,6 +398,7 @@ export const BlockTerminal = memo(function BlockTerminal({
               key={b.id}
               block={b}
               rev={b.rev}
+              cap={caps.get(b.id) ?? LIVE_RENDER_LINES}
               onRerun={runCommand}
               onPassword={writePassword}
               query={search.query}
@@ -474,14 +442,6 @@ export const BlockTerminal = memo(function BlockTerminal({
           onForceStop={forceStop}
           onForceStopped={restoreBlockSurface}
         />
-        {/* Divider between the stop control and the cwd/git badge — same rule
-            the badge draws between its dir and branch segments. Only when both
-            neighbours are visible: stop control needs `busy`, the badge hides
-            in alt-screen and below the 300px container query. */}
-        {busy && !altScreen && (
-          <span className="hidden h-3 w-px shrink-0 bg-[var(--border)] @[300px]:block" />
-        )}
-        {!altScreen && <StatusBadge cwd={cwd} git={git} />}
       </div>
     </div>
   );
@@ -514,48 +474,8 @@ function BlockPasswordInput({ onSubmit }: { onSubmit: (pw: string) => void }) {
         autoComplete="off"
         spellCheck={false}
         placeholder="Enter password, then press Enter…"
-        className="flex-1 bg-transparent text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-        style={{ fontFamily: 'var(--font-mono, "JetBrains Mono", monospace)' }}
+        className="flex-1 bg-transparent font-terminal text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
       />
-    </div>
-  );
-}
-
-/** Right-aligned cwd + git status badge in the command input row. */
-function StatusBadge({ cwd, git }: { cwd: string; git: TermGit | null }) {
-  const dir = cwd ? cwd.split("/").filter(Boolean).pop() || "/" : "";
-  if (!dir) return null;
-  return (
-    // Progressive disclosure as the PANE narrows (container query against the
-    // terminal root): the git segment goes first, then the whole badge, so the
-    // command input always keeps usable width. Long dir/branch names truncate.
-    <div className="ml-auto hidden shrink-0 items-center gap-2 text-2xs text-[var(--muted-foreground)] @[300px]:flex">
-      <span className="flex min-w-0 items-center gap-1" title={cwd}>
-        <Folder size={9} className="shrink-0" />
-        <span className="max-w-[96px] truncate">{dir}</span>
-      </span>
-      {git && (
-        <>
-          <span className="hidden h-3 w-px bg-[var(--border)] @[420px]:block" />
-          <span
-            className="hidden min-w-0 items-center gap-1 @[420px]:flex"
-            title={`On branch ${git.branch}`}
-          >
-            <GitBranch size={9} className="shrink-0" />
-            <span className="max-w-[140px] truncate">{git.branch || "(detached)"}</span>
-            {git.ahead > 0 && <span>↑{git.ahead}</span>}
-            {git.behind > 0 && <span>↓{git.behind}</span>}
-            {git.dirty && (
-              <span
-                className="text-[var(--atlas-status-warning-foreground)]"
-                title="Uncommitted changes"
-              >
-                ●
-              </span>
-            )}
-          </span>
-        </>
-      )}
     </div>
   );
 }
@@ -565,6 +485,32 @@ function StatusBadge({ cwd, git }: { cwd: string; git: TermGit | null }) {
 // rows are rebuilt every flush — the full depth appears the moment it finishes.
 const LIVE_RENDER_LINES = 400;
 const FINISHED_RENDER_LINES = 3000;
+// Lines rendered across ALL finished blocks of one terminal, newest first.
+// Per-block caps alone let 200 blocks × 3000 lines stay mounted — hundreds of
+// thousands of nodes, every one rebuilt when the terminal tab is shown again
+// and every one in the way of each forced layout (typing in the input, the
+// suggestions popup). Older blocks past the budget keep their header and
+// collapse their body behind "show"; Copy and search still read the data.
+const FINISHED_RENDER_BUDGET = 4000;
+
+/** Lines each block may render. Finished blocks only spend the budget: their
+ *  line counts are fixed, so a cap moves only when a block finishes or is
+ *  added — never per streaming flush, which would re-render every card. */
+export function renderCaps(blocks: readonly TerminalBlock[]): Map<number, number> {
+  const caps = new Map<number, number>();
+  let left = FINISHED_RENDER_BUDGET;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b.running) {
+      caps.set(b.id, LIVE_RENDER_LINES);
+      continue;
+    }
+    const cap = Math.min(FINISHED_RENDER_LINES, b.lines.length, left);
+    caps.set(b.id, cap);
+    left -= cap;
+  }
+  return caps;
+}
 
 /** Memoized: block objects mutate in place while running, so `rev` (bumped by
  *  the parser once per flush) is what invalidates a card. Finished blocks never
@@ -573,21 +519,27 @@ const FINISHED_RENDER_LINES = 3000;
 const BlockCard = memo(function BlockCard({
   block,
   rev,
+  cap: budgetCap,
   onRerun,
   onPassword,
   query,
 }: {
   block: TerminalBlock;
   rev: number;
+  /** Lines this card may render — its share of the terminal's budget. */
+  cap: number;
   onRerun: (cmd: string) => void;
   onPassword: (pw: string) => void;
   query: string;
 }) {
   void rev; // memo key only
-  const cap = block.running ? LIVE_RENDER_LINES : FINISHED_RENDER_LINES;
+  // "Show" on a card the budget emptied lifts it to the per-block cap.
+  const [expanded, setExpanded] = useState(false);
+  const cap = expanded ? Math.max(budgetCap, FINISHED_RENDER_LINES) : budgetCap;
   const lines = block.lines;
   const visible = lines.length > cap ? lines.slice(-cap) : lines;
   const hidden = block.droppedLines + (lines.length - visible.length);
+  const budgeted = !block.running && visible.length === 0 && lines.length > 0;
   const cwdName = block.cwd ? block.cwd.split("/").filter(Boolean).pop() : "";
   const [collapsed, setCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -600,7 +552,7 @@ const BlockCard = memo(function BlockCard({
   // prompt marker (zsh sourcing a profile takes a few seconds). Rendering its
   // card then paints a bordered box with nothing in it — a stray grey line at
   // the top of a fresh terminal. Nothing to show, so show nothing.
-  if (!hasHeader && visible.length === 0 && !block.awaitingPassword) return null;
+  if (!hasHeader && lines.length === 0 && !block.awaitingPassword) return null;
 
   const copyOutput = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -696,7 +648,19 @@ const BlockCard = memo(function BlockCard({
           </div>
         </div>
       )}
-      {!collapsed && (hidden > 0 || block.truncated) && (
+      {!collapsed && budgeted && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded(true);
+          }}
+          className="w-full px-3 py-1.5 text-left text-2xs italic text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+        >
+          {lines.length} lines hidden to keep the terminal fast — show
+        </button>
+      )}
+      {!collapsed && !budgeted && (hidden > 0 || block.truncated) && (
         <div className="px-3 pt-2 text-2xs italic text-[var(--muted-foreground)]">
           earlier output hidden — showing the latest {visible.length} lines (Copy gets more)
         </div>
@@ -771,7 +735,8 @@ const LineList = memo(function LineList({
     // and back on only for inputs, `pre`, `code` and this class. This surface
     // used to be a `<pre>` and got selection for free; the line emulator
     // rework made it a `<div>` and selection silently died with the tag.
-    <div className="select-text whitespace-pre-wrap break-words px-3 py-2 font-mono text-sm leading-[1.45] text-[var(--secondary-foreground)]">
+    // `atlas-terminal-output`: `terminalFontSize` less a pixel (globals.css).
+    <div className="atlas-terminal-output select-text whitespace-pre-wrap break-words px-3 py-2 font-terminal leading-[1.4] text-[var(--secondary-foreground)]">
       {lines.map((line) => (
         <OutputLine
           key={line.id}

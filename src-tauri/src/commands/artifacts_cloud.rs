@@ -24,7 +24,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use atlas_artifacts::{
-    AnchorKind, ArtifactsClient, ArtifactsEvent, ArtifactsManager, CloudBoard, Comment,
+    AnchorKind, ArtifactShare, ArtifactsClient, ArtifactsEvent, ArtifactsManager, CloudBoard,
+    Comment,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -177,7 +178,7 @@ enum WireEvent {
     },
     CommentUpsert {
         session_id: String,
-        comment: Comment,
+        comment: Box<Comment>,
     },
     Presence {
         project_id: String,
@@ -213,7 +214,7 @@ fn emit(app: &AppHandle, event: ArtifactsEvent) {
             ..
         } => WireEvent::CommentUpsert {
             session_id,
-            comment: *comment,
+            comment,
         },
         ArtifactsEvent::Presence { key, online } => WireEvent::Presence {
             project_id: key.1,
@@ -705,6 +706,84 @@ pub async fn artifacts_cloud_comments(
     Ok(group(comments))
 }
 
+/// The public share link on one Session, if it has a live one.
+///
+/// Answers the Session's own share rather than the Project's whole list: the
+/// sheet asks about one Session, and handing it every link on the Project
+/// would make it the caller's job to work out which row is the right one.
+///
+/// `Ok(None)` covers both "no link" and "not on the server", which read the
+/// same to the sheet — there is nothing to show either way.
+#[tauri::command]
+pub async fn artifacts_cloud_session_share(
+    project_id: String,
+    session_id: String,
+    app: AppHandle,
+) -> Result<Option<ArtifactShare>, String> {
+    let (client, org_id) = reader(&app)?;
+    let shares = client
+        .shares(&org_id, &project_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(live_session_share(shares, &session_id))
+}
+
+/// Publish a Session on an unguessable link, and answer the link.
+///
+/// Session scope only — see `create_session_share` on the client for why a
+/// Project-wide link is not offered here.
+#[tauri::command]
+pub async fn artifacts_cloud_share_create(
+    project_id: String,
+    session_id: String,
+    comments: bool,
+    app: AppHandle,
+) -> Result<ArtifactShare, String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .create_session_share(&org_id, &project_id, &session_id, comments)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Take a link down. Every token already issued against it stops working.
+#[tauri::command]
+pub async fn artifacts_cloud_share_revoke(
+    project_id: String,
+    share_id: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .revoke_share(&org_id, &project_id, &share_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The public address of a share slug — what a guest opens.
+#[tauri::command]
+pub fn artifacts_cloud_share_url(slug: String) -> String {
+    atlas_artifacts::share_web_url(&slug)
+}
+
+/// The Session's own live link, from a Project's whole list.
+///
+/// Live means not revoked and not past its expiry. A Session can carry more
+/// than one row over its life — publish, revoke, publish again — and only the
+/// one that still opens is an answer.
+fn live_session_share(shares: Vec<ArtifactShare>, session_id: &str) -> Option<ArtifactShare> {
+    let now = chrono::Utc::now();
+    shares.into_iter().find(|s| {
+        s.scope == "session"
+            && s.session_id.as_deref() == Some(session_id)
+            && s.revoked_at.is_none()
+            && s.expires_at
+                .as_deref()
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .is_none_or(|at| at > now)
+    })
+}
+
 /// Split a flat comment list into per-anchor buckets.
 fn group(comments: Vec<Comment>) -> CommentThreads {
     let mut by_anchor: std::collections::HashMap<String, Vec<Comment>> =
@@ -790,6 +869,22 @@ pub async fn artifacts_cloud_comment_delete(
         .map_err(|e| e.to_string())
 }
 
+/// Vote on a comment: `1` up, `-1` down, `0` to take the vote back.
+#[tauri::command]
+pub async fn artifacts_cloud_comment_vote(
+    project_id: String,
+    session_id: String,
+    comment_id: String,
+    value: i8,
+    app: AppHandle,
+) -> Result<Comment, String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .vote_comment(&org_id, &project_id, &session_id, &comment_id, value)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// The client and the Organisation it is pointed at, or a legible refusal.
 fn reader(app: &AppHandle) -> Result<(Arc<ArtifactsClient>, String), String> {
     let state = app
@@ -797,7 +892,7 @@ fn reader(app: &AppHandle) -> Result<(Arc<ArtifactsClient>, String), String> {
         .ok_or("artifacts cloud is not ready")?;
     let org_id = state
         .org_id()
-        .ok_or("sign in to a synced Organisation to use the shared timeline")?;
+        .ok_or("sign in to a synced Organization to use the shared timeline")?;
     Ok((Arc::clone(&state.client), org_id))
 }
 
@@ -831,6 +926,7 @@ mod tests {
             deleted_at: None,
             resolved_at: None,
             resolved_by: None,
+            votes: Default::default(),
         }
     }
 
@@ -843,7 +939,7 @@ mod tests {
         let frames = [
             WireEvent::CommentUpsert {
                 session_id: "ses_1".into(),
-                comment: comment("c1", AnchorKind::Message, "msg_1", None),
+                comment: Box::new(comment("c1", AnchorKind::Message, "msg_1", None)),
             },
             WireEvent::EntryUpsert {
                 session_id: "ses_1".into(),
@@ -876,7 +972,7 @@ mod tests {
         // The kind tag itself is what the renderer switches on.
         let json = serde_json::to_value(WireEvent::CommentUpsert {
             session_id: "ses_1".into(),
-            comment: comment("c1", AnchorKind::Message, "msg_1", None),
+            comment: Box::new(comment("c1", AnchorKind::Message, "msg_1", None)),
         })
         .unwrap();
         assert_eq!(json["kind"], "commentUpsert");

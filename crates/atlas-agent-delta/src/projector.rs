@@ -11,7 +11,7 @@ use atlas_acp_thread::{
 use atlas_agent_servers::ThreadEventSink;
 use atlas_agent_wire::{
     AgentId, DeltaSink, Emitter, RateLimitWindow, SessionDelta, SessionDeltaEnvelope,
-    SessionStatus, ToolCall, Usage,
+    SessionStatus, SubagentStatus, ToolCall, Usage,
 };
 use uuid::Uuid;
 
@@ -83,9 +83,7 @@ pub fn elicitation_wire(elicitation: &atlas_acp_thread::Elicitation) -> Elicitat
 /// Something that wants to see thread events besides the wire projection.
 ///
 /// One observer, set once at startup: Atlas's history store, which keeps a
-/// metadata row per conversation current from the same events (Zed's
-/// `ThreadMetadataStore` subscribes to its `ConversationView`s the same way,
-/// `thread_metadata_store.rs:1188-1212`).
+/// metadata row per conversation current from the same events.
 ///
 /// It is handed the thread as well as the event because the row records what
 /// the thread *is* — its title, its working directories, whether anything has
@@ -549,6 +547,15 @@ enum Projected {
     ToolCall {
         message_id: String,
         snapshot: Box<ToolCall>,
+        /// Where `snapshot.result` ends in its terminal's TOTAL output (every
+        /// byte the command printed, kept or dropped), when the result is one
+        /// terminal's. This, not `result.len()`, is what the next chunk is
+        /// asked for: once the terminal's buffer starts dropping its front, a
+        /// window-relative length names different bytes than it did, and the
+        /// only safe move was to rebuild and re-ship the whole window per
+        /// chunk — the ATL-219 cost, back, for every command past the byte
+        /// limit. Equal to `result.len()` until then.
+        result_end: usize,
     },
     /// Plans, compactions and elicitations: emitted, but nothing about them is
     /// diffed against a previous value.
@@ -589,6 +596,16 @@ struct SessionProjection {
     new_permissions: Vec<(Uuid, PermissionKey)>,
     announced_elicitations: Vec<ElicitationEntryId>,
     new_elicitations: Vec<(Uuid, ElicitationKey)>,
+    /// Each subagent as last announced, by its launching call's id, so an
+    /// unchanged one is not re-sent. Like `plan`: the set is derived from the
+    /// thread on every tool-call change, and only what moved goes out.
+    subagents: HashMap<String, serde_json::Value>,
+    /// When each child was first seen to end, by its launching call's id.
+    /// The thread keeps no such time (it stamps an entry once, on creation),
+    /// so it is taken here, the first time a child announced as running comes
+    /// back terminal — and kept, because every later sync re-derives the
+    /// child and would otherwise fall back to `project`'s floor.
+    subagent_ends: HashMap<String, i64>,
 }
 
 impl SessionProjection {
@@ -607,7 +624,61 @@ impl SessionProjection {
             new_permissions: Vec::new(),
             announced_elicitations: Vec::new(),
             new_elicitations: Vec::new(),
+            subagents: HashMap::new(),
+            subagent_ends: HashMap::new(),
         }
+    }
+
+    /// The subagent deltas for whatever the thread says now.
+    ///
+    /// Called after any change that can touch a tool call. Derived rather than
+    /// tracked: a launch is only recognisable once its `rawInput` has streamed
+    /// in, and a child's calls can be attributed to it by an update later than
+    /// the one that created them — so "what changed" is a question only the
+    /// current thread can answer.
+    fn sync_subagents(&mut self) -> Vec<SessionDelta> {
+        let thread = lock_thread(&self.thread);
+        let message_id_at = |ix: usize| match self.entries.get(ix) {
+            Some(Projected::ToolCall { message_id, .. }) => Some(message_id.clone()),
+            _ => None,
+        };
+        let started_at = |ix: usize| {
+            thread
+                .entry_created_at(ix)
+                .unwrap_or_else(chrono::Utc::now)
+                .timestamp_millis()
+        };
+        let current = project::subagents_timed(&thread, message_id_at, started_at);
+        drop(thread);
+
+        let mut deltas = Vec::new();
+        for (mut subagent, timed_by_agent) in current {
+            // The child's own report beats this clock: it measured the run
+            // itself, and it is what a reopened session will show.
+            if subagent.status != SubagentStatus::Running && !timed_by_agent {
+                if let Some(&ended) = self.subagent_ends.get(&subagent.tool_call_id) {
+                    subagent.ended_at_ms = Some(ended);
+                } else if self
+                    .subagents
+                    .get(&subagent.tool_call_id)
+                    .is_some_and(|announced| announced["status"] == "running")
+                {
+                    let ended = chrono::Utc::now().timestamp_millis();
+                    self.subagent_ends
+                        .insert(subagent.tool_call_id.clone(), ended);
+                    subagent.ended_at_ms = Some(ended);
+                }
+            }
+            let Ok(value) = serde_json::to_value(&subagent) else {
+                continue;
+            };
+            if self.subagents.get(&subagent.tool_call_id) == Some(&value) {
+                continue;
+            }
+            self.subagents.insert(subagent.tool_call_id.clone(), value);
+            deltas.push(SessionDelta::SubagentUpserted { subagent });
+        }
+        deltas
     }
 
     fn wrap(&self, deltas: Vec<SessionDelta>) -> Vec<SessionDeltaEnvelope> {
@@ -625,10 +696,19 @@ impl SessionProjection {
         match event {
             // New entries can also appear without an event of their own when a
             // later event refers to one, so both paths go through `sync`.
-            AcpThreadEvent::NewEntry => self.sync_entries(),
+            AcpThreadEvent::NewEntry => {
+                let mut deltas = self.sync_entries();
+                deltas.extend(self.sync_subagents());
+                deltas
+            }
             AcpThreadEvent::EntryUpdated(ix) => {
                 let mut deltas = self.sync_entries();
-                deltas.extend(self.update_entry(ix));
+                let mut updated = self.update_entry(ix);
+                if lock_thread(&self.thread).entry_time_approximate(ix) {
+                    mark_time_approximate(&mut updated);
+                }
+                deltas.extend(updated);
+                deltas.extend(self.sync_subagents());
                 deltas
             }
             AcpThreadEvent::EntriesRemoved(range) => {
@@ -667,18 +747,34 @@ impl SessionProjection {
                     }
                     true
                 });
+                // And its subagents. The rewind drops the launching calls, so
+                // leaving them here would both keep a finished child on screen
+                // and make a re-run of the same work look unchanged, so no
+                // delta would be sent for it.
+                self.subagents
+                    .retain(|tool_call_id, _| !removed.iter().any(|id| id == tool_call_id));
                 if turns > 0 {
                     deltas.push(SessionDelta::HistoryRewound { turns });
                 }
                 deltas
             }
             AcpThreadEvent::StatusChanged => self.status_deltas(),
-            AcpThreadEvent::Stopped(stop_reason) => {
+            AcpThreadEvent::Stopped(stop_reason, turn) => {
+                // The event carries its own turn's record — the same figures a
+                // snapshot reads back after a reload. Read from the thread
+                // here instead, a stop drained behind a newer turn or a rewind
+                // would announce that one's times.
                 let mut deltas = vec![SessionDelta::TurnFinished {
                     stop_reason: project::stop_reason_token(stop_reason),
                     turn_seq: self.turn_seq,
+                    started_at_ms: turn.started_at.map(|at| at.timestamp_millis()),
+                    ended_at_ms: Some(turn.ended_at.timestamp_millis()),
+                    worked_ms: turn.worked_ms,
                 }];
                 deltas.extend(self.status_deltas());
+                // A child launched to run on its own ends with the turn: no
+                // tool call changes to say so.
+                deltas.extend(self.sync_subagents());
                 deltas
             }
             // Carries no message: the failure text lives with whoever awaited
@@ -770,6 +866,9 @@ impl SessionProjection {
                 break;
             }
             let (projected, mut new) = self.project_new(&thread, ix);
+            if thread.entry_time_approximate(ix) {
+                mark_time_approximate(&mut new);
+            }
             drop(thread);
             self.entries.push(projected);
             deltas.append(&mut new);
@@ -819,6 +918,7 @@ impl SessionProjection {
             AgentThreadEntry::ToolCall(call) => {
                 let message_id = new_message_id();
                 let snapshot = project::tool_call(call, thread);
+                let result_end = result_end_of(&call.content, thread, snapshot.result.as_deref());
                 let delta = SessionDelta::ToolCallUpserted {
                     message_id: message_id.clone(),
                     tool_call: snapshot.clone(),
@@ -827,11 +927,12 @@ impl SessionProjection {
                     Projected::ToolCall {
                         message_id,
                         snapshot: Box::new(snapshot),
+                        result_end,
                     },
                     vec![delta],
                 )
             }
-            // Nothing in the ported stack constructs `CompletedPlan`, so this
+            // Nothing in the stack constructs `CompletedPlan`, so this
             // arm and its counterpart in `update_entry` are unreachable rather
             // than merely rare. Kept for exhaustiveness, and because the
             // variant is the shape a finished plan would arrive in.
@@ -973,6 +1074,7 @@ impl SessionProjection {
                 Projected::ToolCall {
                     message_id,
                     snapshot,
+                    result_end,
                 },
                 AgentThreadEntry::ToolCall(call),
             ) => {
@@ -982,34 +1084,62 @@ impl SessionProjection {
                 // printed so far — on every chunk it prints, with the session's
                 // lock held — which is what let a chatty command stall the
                 // whole session (ATL-219).
+                //
+                // The terminal is asked from `result_end`, an offset into its
+                // total output, so the tail keeps streaming after the buffer
+                // drops its front. A first result stays a full snapshot: a
+                // consumer that ignores chunks must still see the tool call's
+                // content announced at least once.
                 let meta = project::tool_call_meta(call);
+                let terminal = project::sole_terminal(&call.content);
+                let extension = terminal.and_then(|id| {
+                    let emitted = snapshot.result.as_deref().unwrap_or_default().len();
+                    (emitted > 0)
+                        .then(|| thread.terminal_output_appended(id, *result_end))
+                        .flatten()
+                });
                 if tool_call_meta_eq(snapshot, &meta) {
-                    if let Some(terminal_id) = project::sole_terminal(&call.content) {
-                        let emitted = snapshot.result.as_deref().unwrap_or_default().len();
-                        match thread.terminal_output_appended(terminal_id, emitted) {
-                            Some(TerminalAppend::Unchanged) => return Vec::new(),
-                            // A first result stays a full snapshot, as on the
-                            // slow path below: a consumer that ignores chunks
-                            // must still see the tool call's content announced
-                            // at least once.
-                            Some(TerminalAppend::Grew(suffix)) if emitted > 0 => {
-                                let delta = SessionDelta::ToolCallOutputChunk {
-                                    message_id: message_id.clone(),
-                                    tool_call_id: snapshot.id.clone(),
-                                    delta: suffix.clone(),
-                                };
-                                snapshot
-                                    .result
-                                    .get_or_insert_with(String::new)
-                                    .push_str(&suffix);
-                                return vec![delta];
-                            }
-                            _ => {}
+                    match &extension {
+                        Some(TerminalAppend::Unchanged) => return Vec::new(),
+                        Some(TerminalAppend::Grew(suffix)) => {
+                            let delta = SessionDelta::ToolCallOutputChunk {
+                                message_id: message_id.clone(),
+                                tool_call_id: snapshot.id.clone(),
+                                delta: suffix.clone(),
+                            };
+                            snapshot
+                                .result
+                                .get_or_insert_with(String::new)
+                                .push_str(suffix);
+                            *result_end += suffix.len();
+                            return vec![delta];
                         }
+                        None => {}
                     }
                 }
+                // Something besides the result moved (a status, a title). The
+                // result is still carried forward as an extension when the
+                // terminal can serve one — so a status change on a command past
+                // the byte limit does not swap the output the user has been
+                // reading for the window plus a "dropped" marker. Only when no
+                // extension exists (a first result; an offset the buffer has
+                // dropped past) is the result rebuilt from the terminal, and
+                // THAT rendering says honestly what was dropped.
                 let mut current = meta;
-                current.result = project::tool_result(&call.content, &thread);
+                match extension {
+                    Some(TerminalAppend::Grew(suffix)) => {
+                        let mut result = snapshot.result.clone().unwrap_or_default();
+                        result.push_str(&suffix);
+                        current.result = Some(result);
+                        *result_end += suffix.len();
+                    }
+                    Some(TerminalAppend::Unchanged) => current.result = snapshot.result.clone(),
+                    None => {
+                        current.result = project::tool_result(&call.content, &thread);
+                        *result_end =
+                            result_end_of(&call.content, &thread, current.result.as_deref());
+                    }
+                }
                 let delta = tool_call_delta(message_id, snapshot, &current);
                 **snapshot = current;
                 delta.into_iter().collect()
@@ -1276,6 +1406,19 @@ fn tool_call_delta(
     })
 }
 
+/// Where `result` ends in its terminal's total output — see
+/// `Projected::ToolCall::result_end`. For a result that is not one terminal's,
+/// its own length: nothing drops its front, so the two never diverge.
+fn result_end_of(
+    content: &[atlas_acp_thread::ToolCallContent],
+    thread: &atlas_acp_thread::AcpThread,
+    result: Option<&str>,
+) -> usize {
+    project::sole_terminal(content)
+        .and_then(|id| thread.terminal_output_end(id))
+        .unwrap_or_else(|| result.map_or(0, str::len))
+}
+
 /// Whether two projections of a tool call agree on everything but the result.
 ///
 /// The result is the only field whose size grows with what a command printed,
@@ -1291,6 +1434,8 @@ fn tool_call_meta_eq(previous: &ToolCall, current: &ToolCall) -> bool {
         && previous.locations == current.locations
         && previous.raw_output == current.raw_output
         && previous.content_blocks == current.content_blocks
+        && previous.started_at_ms == current.started_at_ms
+        && previous.ended_at_ms == current.ended_at_ms
 }
 
 /// `LoadError`'s own `Display` is the reason text, so the wire carries exactly
@@ -1307,4 +1452,14 @@ fn lock_thread(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread>
     thread
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Mark every message these deltas announce as carrying a replay time, not the
+/// time it was said (`AcpThread::entry_time_approximate`).
+fn mark_time_approximate(deltas: &mut [SessionDelta]) {
+    for delta in deltas {
+        if let SessionDelta::MessageAppended { message } = delta {
+            message.timestamp_approximate = true;
+        }
+    }
 }

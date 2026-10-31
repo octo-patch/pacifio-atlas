@@ -651,7 +651,7 @@ impl Store {
         // the same silence it exists to prevent.
         self.conn.execute(
             "UPDATE agent_session
-                SET needs_attention = 1, attention_reason = ?2, updated_at = ?3
+                SET needs_attention = 1, attention_reason = ?2, updated_at = ?3, flagged_at = ?3
               WHERE id = ?1",
             rusqlite::params![session_id, reason, Utc::now().to_rfc3339()],
         )?;
@@ -862,6 +862,138 @@ impl Store {
         let rows = stmt
             .query_map([session_id], |row| row.get::<_, i64>(0))?
             .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Every turn of this Session with its state and times, oldest first.
+    pub fn turn_spans(&self, session_id: &str) -> Result<Vec<TurnSpan>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT turn_seq, state, started_at, ended_at FROM turn
+              WHERE session_id = ?1 ORDER BY turn_seq",
+        )?;
+        let rows = stmt
+            .query_map([session_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows
+            .into_iter()
+            .map(|(turn_seq, state, started, ended)| TurnSpan {
+                turn_seq,
+                // A state we do not know is one this build cannot have
+                // finished: read it as still open.
+                state: TurnState::parse(&state).unwrap_or(TurnState::Open),
+                started_at: parse_time(started),
+                ended_at: ended.map(parse_time),
+            })
+            .collect())
+    }
+
+    /// A Session's failed tool calls, newest first, at most `limit`. Reads
+    /// only inline text payloads, cut to 400 characters: a spilled payload
+    /// stays on disk and a binary result is left out. Walks
+    /// `idx_tool_call_session_seq`.
+    pub fn failed_tool_calls(&self, session_id: &str, limit: i64) -> Result<Vec<FailedCall>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tool_name, title, substr(arguments, 1, 400),
+                    CASE WHEN result_binary = 0 THEN substr(result, 1, 400) END, turn_seq
+               FROM tool_call
+              WHERE session_id = ?1 AND status = 'failed'
+              ORDER BY seq DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![session_id, limit], |row| {
+                let name: String = row.get(0)?;
+                Ok(FailedCall {
+                    tool_name: ToolName::parse(&name).unwrap_or(ToolName::Other),
+                    title: row.get(1)?,
+                    arguments: row.get(2)?,
+                    result: row.get(3)?,
+                    turn_seq: row.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The in-repository paths a Session wrote, newest write first, each
+    /// once, with whether its last write deleted it. At most `limit`.
+    pub fn written_paths(&self, session_id: &str, limit: i64) -> Result<Vec<(String, bool)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.path, f.deleted FROM file_touch f
+              WHERE f.session_id = ?1 AND f.out_of_repo = 0
+                AND f.seq = (SELECT MAX(g.seq) FROM file_touch g
+                              WHERE g.session_id = f.session_id AND g.path = f.path)
+              ORDER BY f.seq DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![session_id, limit], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The Sessions that wrote `path` (project-relative, as stored), with
+    /// their last write to it, newest first. Uses `idx_file_touch_by_path`.
+    pub fn sessions_touching_path(
+        &self,
+        path: &str,
+        limit: i64,
+    ) -> Result<Vec<(String, DateTime<Utc>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT session_id, MAX(created_at) AS last FROM file_touch
+              WHERE path = ?1 GROUP BY session_id
+              ORDER BY last DESC, session_id LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![path, limit], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows
+            .into_iter()
+            .map(|(session, last)| (session, parse_time(last)))
+            .collect())
+    }
+
+    /// The Checkpoints whose commit carried `path`, newest first. A renamed
+    /// file appears here under its committed name, which no touch has. No
+    /// index covers `files_touched`, so this reads every Checkpoint row: one
+    /// per (Session, commit), small next to the message tables.
+    pub fn checkpoints_touching_path(&self, path: &str, limit: i64) -> Result<Vec<Checkpoint>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CHECKPOINT_COLUMNS} FROM checkpoint c
+              WHERE EXISTS (SELECT 1 FROM json_each(c.files_touched) WHERE value = ?1)
+              ORDER BY created_at DESC, id LIMIT ?2"
+        ))?;
+        let rows = stmt
+            .query_map(rusqlite::params![path, limit], row_to_checkpoint)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The Checkpoints of every commit whose sha starts with `prefix` (hex,
+    /// at least 7). A range over `idx_checkpoint_commit`, for a short sha git
+    /// can no longer resolve.
+    pub fn checkpoints_for_commit_prefix(&self, prefix: &str) -> Result<Vec<Checkpoint>> {
+        if prefix.len() < 7 || !prefix.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Ok(Vec::new());
+        }
+        let low = prefix.to_ascii_lowercase();
+        let high = format!("{low}g");
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {CHECKPOINT_COLUMNS} FROM checkpoint
+              WHERE commit_sha >= ?1 AND commit_sha < ?2 ORDER BY created_at DESC, id"
+        ))?;
+        let rows = stmt
+            .query_map(rusqlite::params![low, high], row_to_checkpoint)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -1688,14 +1820,10 @@ impl Store {
         // to the Organisation as finished work. The abort verdict lives only in
         // the local `turn` table, so the server could never learn otherwise.
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {MESSAGE_COLUMNS} FROM agent_message m
+            "SELECT {MESSAGE_COLUMNS} FROM agent_message x
               WHERE sync_state = 'pending'
                 AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
-                AND NOT EXISTS (
-                    SELECT 1 FROM turn t
-                     WHERE t.session_id = m.session_id
-                       AND t.turn_seq = m.turn_seq
-                       AND t.state = 'aborted')
+                {NOT_IN_ABORTED_TURN}
               ORDER BY seq LIMIT ?2"
         ))?;
         let messages = stmt
@@ -1725,14 +1853,10 @@ impl Store {
         }
 
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {TOOL_CALL_COLUMNS} FROM tool_call c
+            "SELECT {TOOL_CALL_COLUMNS} FROM tool_call x
               WHERE sync_state = 'pending'
                 AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
-                AND NOT EXISTS (
-                    SELECT 1 FROM turn t
-                     WHERE t.session_id = c.session_id
-                       AND t.turn_seq = c.turn_seq
-                       AND t.state = 'aborted')
+                {NOT_IN_ABORTED_TURN}
               ORDER BY seq LIMIT ?2"
         ))?;
         let calls = stmt
@@ -2331,8 +2455,8 @@ impl Store {
     /// touch is spent. Without consumption, every future commit that happens to
     /// modify the same path — including purely human work months later, and
     /// teammate commits arriving via pull — would be attributed to the Session
-    /// forever. This mirrors the carry-forward rule in Entire's link engine,
-    /// which is the load-bearing half of the asymmetric rule.
+    /// forever. This is the carry-forward rule, the load-bearing half of the
+    /// asymmetric rule.
     pub fn link_candidates(&self, workspace_id: &str) -> Result<Vec<LinkCandidate>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, started_at FROM agent_session
@@ -2439,12 +2563,20 @@ impl Store {
         Ok(())
     }
 
-    /// Sessions flagged during capture — a redaction or storage failure.
-    pub fn flagged_session_count(&self, workspace_id: &str) -> Result<i64> {
+    /// Sessions flagged during capture — a redaction or storage failure — at
+    /// or after `since`.
+    ///
+    /// Bounded because the flag is permanent: it is a fact about the Session,
+    /// and the Session keeps showing it. Unbounded, one lock timeout weeks ago
+    /// would hold the Project's health banner up forever. Bounded by the
+    /// flag's own time (`flagged_at`), not `updated_at`: every prompt and
+    /// message moves `updated_at`, so an old flag on a Session still in use
+    /// would count as new for as long as anyone worked in it.
+    pub fn flagged_session_count(&self, workspace_id: &str, since: DateTime<Utc>) -> Result<i64> {
         Ok(self.conn.query_row(
             "SELECT COUNT(*) FROM agent_session
-              WHERE workspace_id = ?1 AND needs_attention = 1",
-            [workspace_id],
+              WHERE workspace_id = ?1 AND needs_attention = 1 AND flagged_at >= ?2",
+            rusqlite::params![workspace_id, since.to_rfc3339()],
             |row| row.get(0),
         )?)
     }
@@ -2454,20 +2586,33 @@ impl Store {
     /// Counts Sessions, Messages, tool calls and Checkpoints together, because
     /// "3 pending" should mean three things waiting rather than three of one
     /// arbitrary kind.
+    ///
+    /// Pending excludes rows of aborted turns, which the outbox never sends
+    /// ([`NOT_IN_ABORTED_TURN`]). Counting them would report work as waiting
+    /// to sync that never will be, and the count could never reach zero.
     pub fn row_count_in_state(&self, workspace_id: &str, state: SyncState) -> Result<i64> {
+        let turn_filter = if state == SyncState::Pending {
+            NOT_IN_ABORTED_TURN
+        } else {
+            ""
+        };
         Ok(self.conn.query_row(
-            "SELECT
-               (SELECT COUNT(*) FROM agent_session
-                 WHERE workspace_id = ?1 AND sync_state = ?2)
-             + (SELECT COUNT(*) FROM agent_message
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))
-             + (SELECT COUNT(*) FROM tool_call
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))
-             + (SELECT COUNT(*) FROM checkpoint
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))",
+            &format!(
+                "SELECT
+                   (SELECT COUNT(*) FROM agent_session
+                     WHERE workspace_id = ?1 AND sync_state = ?2)
+                 + (SELECT COUNT(*) FROM agent_message x
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
+                       {turn_filter})
+                 + (SELECT COUNT(*) FROM tool_call x
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
+                       {turn_filter})
+                 + (SELECT COUNT(*) FROM checkpoint
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))"
+            ),
             rusqlite::params![workspace_id, state.as_str()],
             |row| row.get(0),
         )?)
@@ -2601,6 +2746,15 @@ pub struct AgentEditInput<'a> {
     /// **Already redacted.**
     pub patch: Option<&'a str>,
 }
+
+/// Keeps rows of aborted turns out: appended to a message or tool-call query
+/// whose table is aliased `x`. One string so the outbox and the pending count
+/// cannot disagree about what is waiting to sync.
+const NOT_IN_ABORTED_TURN: &str = "AND NOT EXISTS (
+    SELECT 1 FROM turn t
+     WHERE t.session_id = x.session_id
+       AND t.turn_seq = x.turn_seq
+       AND t.state = 'aborted')";
 
 const TOOL_CALL_COLUMNS: &str = "id, session_id, seq, turn_seq, tool_name, title, kind, status, \
      locations, arguments, arguments_ref, result, result_ref, result_binary, created_at, sync_state";

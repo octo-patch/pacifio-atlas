@@ -32,6 +32,7 @@ import type { OrgDirectory } from "@/features/organisations/lib/use-org-director
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { Hint } from "@/ui/tooltip";
+import { IconButton } from "@/ui/icon-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +52,7 @@ import {
 } from "../lib/comment-threads";
 import type { EntryKind, SessionDetail as Detail } from "../types";
 import { avatarUser } from "./comment-thread";
+import { splitSelectionComment } from "../lib/selection-comment";
 import type { RowComments } from "./session-detail";
 import { JUMP_EVENT, type JumpDetail } from "./session-chat-message";
 
@@ -163,7 +165,12 @@ export function CommentsPanelBase({
           value={filters.query}
           onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
           onKeyDown={(e) => {
-            if (e.key === "Escape") setFilters((f) => ({ ...f, query: "" }));
+            // First Escape clears the search; only an empty box lets it
+            // through to whatever hosts the panel (which closes on it).
+            if (e.key === "Escape" && filters.query) {
+              e.preventDefault();
+              setFilters((f) => ({ ...f, query: "" }));
+            }
           }}
           placeholder="Search comments…"
           spellCheck={false}
@@ -235,6 +242,7 @@ const ThreadRow = memo(function ThreadRow({
   label: string;
   onJump: (anchorId: string) => void;
 }) {
+  const excerpt = splitSelectionComment(thread.root.body ?? "");
   const tally = threadTally(thread);
   const author = directory.byId.get(thread.root.authorId) ?? null;
   const name = thread.root.guestName ?? author?.name ?? "A member";
@@ -279,12 +287,25 @@ const ThreadRow = memo(function ThreadRow({
         </span>
       </span>
 
+      {excerpt && !thread.root.deletedAt && (
+        <span
+          aria-label="Selected passage"
+          className="line-clamp-2 w-full whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-xs text-muted-foreground"
+        >
+          {excerpt.selection}
+        </span>
+      )}
       {/* The comment itself, unprefixed — the byline above already said who. */}
       <span className="line-clamp-2 w-full text-xs leading-snug text-[var(--secondary-foreground)]">
         {thread.root.deletedAt ? (
           <span className="italic text-[var(--atlas-text-disabled)]">deleted this comment</span>
         ) : (
-          thread.root.body
+          // Mentions are stored as `<@user-id>`; the preview names them, as
+          // the thread itself does.
+          (excerpt?.body ?? thread.root.body ?? "").replace(
+            /<@([A-Za-z0-9_.:-]{1,128})>/g,
+            (_, id: string) => `@${directory.byId.get(id)?.name ?? id}`,
+          )
         )}
       </span>
 
@@ -334,16 +355,8 @@ function FilterMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label="Filter comments"
-        className={cn(
-          "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded transition-colors hover:bg-[var(--atlas-element-hover)]",
-          active
-            ? "bg-[var(--atlas-element-active)] text-[var(--foreground)]"
-            : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-        )}
-      >
-        <Filter size={13} />
-      </DropdownMenuTrigger>
+        render={<IconButton icon={Filter} label="Filter comments" size="sm" active={active} />}
+      />
       <DropdownMenuContent align="end" className="min-w-[200px]">
         <DropdownMenuItem onClick={() => setFilters((f) => ({ ...f, sort: "newest" }))}>
           <Tick on={filters.sort === "newest"} />

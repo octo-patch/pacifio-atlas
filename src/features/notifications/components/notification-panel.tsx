@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { Bell, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
@@ -7,12 +7,53 @@ import { jumpToSession } from "@/features/chat/lib/tab-project";
 import { jumpToTerminal } from "@/features/terminal/lib/jump-to-terminal";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { NotificationLeadingIcon } from "./notification-leading-icon";
+import type { NotificationTarget } from "../lib/catalog";
 import { openNotificationTarget } from "../lib/deliver";
+import { hasNotificationAction, runNotificationAction } from "../lib/notification-actions";
 import {
   useNotificationsStore,
   visibleItems,
   type AppNotification,
 } from "../stores/notifications-store";
+
+/** Drawer width when no surfaces pane is on screen. */
+const FALLBACK_WIDTH = 360;
+
+/**
+ * The on-screen surfaces pane's width, measured from the left edge of its
+ * first visible column to the window's right edge, so the drawer covers
+ * exactly the right panel. Collapsed columns and background projects measure
+ * zero and are skipped; with none visible, the fallback width.
+ */
+function useSurfacesPaneWidth(active: boolean): number {
+  const [width, setWidth] = useState(FALLBACK_WIDTH);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const query = () => document.querySelectorAll<HTMLElement>("[data-surface-column]");
+    // Re-queried on every pass, so a column added, removed or promoted to
+    // main while the drawer is open is never measured from a stale list.
+    const measure = () => {
+      let left = Infinity;
+      let right = -Infinity;
+      for (const el of query()) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0) continue;
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      }
+      setWidth(left === Infinity ? FALLBACK_WIDTH : Math.round(right - left));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    for (const el of query()) ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [active]);
+  return width;
+}
 
 /** Bucket a timestamp into a relative-day group label. */
 function dayBucket(iso: string): string {
@@ -34,6 +75,7 @@ export function NotificationPanel() {
   // lose the other org's items, only hide them.
   const items = useMemo(() => visibleItems(allItems, activeOrgId), [allItems, activeOrgId]);
   const { close, clearAll } = useNotificationsStore.use.actions();
+  const width = useSurfacesPaneWidth(open);
 
   // Preserve first-seen order within each day bucket (items are newest-first).
   const groups = useMemo(() => {
@@ -59,11 +101,12 @@ export function NotificationPanel() {
       />
       <aside
         className={cn(
-          "fixed right-0 top-0 bottom-0 z-drawer w-[360px] flex flex-col",
+          "fixed right-0 top-0 bottom-0 z-drawer flex flex-col",
           "border-l border-[var(--border)]",
           "bg-[var(--card)]/60 backdrop-blur-2xl",
           "shadow-md animate-slide-in-right",
         )}
+        style={{ width }}
         role="dialog"
         aria-label="Notifications"
       >
@@ -143,7 +186,8 @@ function NotificationCard({ n }: { n: AppNotification }) {
         <div className="flex items-center gap-2">
           {!n.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--primary)]" />}
           <span className="truncate text-sm font-medium text-foreground">{n.title}</span>
-          <span className="ml-auto shrink-0 text-3xs text-muted-foreground tabular-nums">
+          {/* Gives way to the Dismiss button, which takes its place on hover. */}
+          <span className="ml-auto shrink-0 text-3xs text-muted-foreground tabular-nums transition-opacity group-hover:opacity-0 group-has-[[data-dismiss]:focus-visible]:opacity-0">
             {timeAgo(n.timestamp, { suffix: true })}
           </span>
         </div>
@@ -152,22 +196,72 @@ function NotificationCard({ n }: { n: AppNotification }) {
             {n.body}
           </p>
         )}
+        <CardActions n={n} onRun={close} />
       </div>
 
       <Hint label="Dismiss">
         <button
           type="button"
+          data-dismiss
+          aria-label="Dismiss"
           onClick={(e) => {
             e.stopPropagation();
             dismiss(n.id);
           }}
-          className="absolute right-1.5 top-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 grid h-5 w-5 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-element-active transition-opacity"
+          className="absolute right-2 top-2.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 grid h-5 w-5 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-element-active transition-opacity"
         >
           <X size={11} />
         </button>
       </Hint>
     </div>
   );
+}
+
+/** An item's buttons beyond "Open" — only while it still applies (not
+ *  resolved) and a handler is registered for each. */
+function CardActions({ n, onRun }: { n: AppNotification; onRun: () => void }) {
+  const target = targetOf(n);
+  const actions =
+    n.resolved || !target ? [] : (n.actions ?? []).filter((a) => hasNotificationAction(a.id));
+  if (!target || actions.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {actions.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRun();
+            void runNotificationAction(a.id, { kind: n.kind, target, args: a.args });
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+          className="h-6 px-2 rounded-md border border-border text-2xs font-medium text-foreground bg-[var(--card)] hover:bg-element-active transition-colors"
+        >
+          {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The full target an item's actions run against: its app-level target, or
+ *  the terminal / session it was raised from. */
+function targetOf(n: AppNotification): NotificationTarget | null {
+  if (n.target) return n.target;
+  if (n.source === "terminal" && n.tabId && n.terminalId) {
+    return { type: "terminal", tabId: n.tabId, terminalId: n.terminalId, projectId: n.projectId };
+  }
+  if (n.source === "agent" && (n.tabId || n.threadId)) {
+    return {
+      type: "session",
+      tabId: n.tabId ?? "",
+      sessionId: n.sessionId,
+      threadId: n.threadId,
+      projectId: n.projectId,
+    };
+  }
+  return null;
 }
 
 /** Best-effort: bring the originating chat, terminal or sign-in surface into view. */
@@ -178,6 +272,12 @@ function focusNotification(n: AppNotification) {
   }
   if (n.source === "terminal" && n.tabId) {
     void jumpToTerminal({ tabId: n.tabId, terminalId: n.terminalId, projectId: n.projectId });
+    return;
+  }
+  const target = n.source === "agent" && n.threadId ? targetOf(n) : null;
+  if (target) {
+    // No tab may show it any more: resumed from history by its thread id.
+    void openNotificationTarget(target);
     return;
   }
   if (n.source === "agent" && n.tabId) {

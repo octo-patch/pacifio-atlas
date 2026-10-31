@@ -7,12 +7,14 @@ export type GitErrorCode =
   | "remote-not-found"
   | "network-error"
   | "non-fast-forward"
+  | "history-rewritten"
   | "force-push-rejected"
   | "protected-branch"
   | "push-rejected"
   | "merge-conflicts"
   | "rebase-conflicts"
   | "unrelated-histories"
+  | "divergent-branches"
   | "local-changes-overwritten"
   | "uncommitted-changes"
   | "nothing-to-commit"
@@ -38,7 +40,7 @@ export interface GitErrorPayload {
   hint?: string | null;
 }
 
-function isGitError(e: unknown): e is GitErrorPayload {
+export function isGitError(e: unknown): e is GitErrorPayload {
   return (
     typeof e === "object" &&
     e !== null &&
@@ -52,6 +54,7 @@ function isGitError(e: unknown): e is GitErrorPayload {
 const DIALOG_CODES: ReadonlySet<GitErrorCode> = new Set([
   "auth-failed",
   "non-fast-forward",
+  "history-rewritten",
   "force-push-rejected",
   "protected-branch",
   "push-rejected",
@@ -67,6 +70,7 @@ const INFO_CODES: ReadonlySet<GitErrorCode> = new Set(["nothing-to-commit", "no-
 const TITLES: Partial<Record<GitErrorCode, string>> = {
   "auth-failed": "Authentication failed",
   "non-fast-forward": "Push rejected — pull first",
+  "history-rewritten": "Push rejected — history was rewritten",
   "force-push-rejected": "Force push rejected",
   "protected-branch": "Branch is protected",
   "push-rejected": "Push rejected",
@@ -89,6 +93,11 @@ export function gitErrorTitle(payload: GitErrorPayload): string {
 export function handleGitError(e: unknown): void {
   if (!isGitError(e)) {
     toast.error(String(e));
+    return;
+  }
+  // Not a dead end: the fix is a choice between two pulls, so ask for it.
+  if (e.code === "divergent-branches") {
+    useGitStore.getState().actions.showPullChoice({ kind: "failed", error: e });
     return;
   }
   if (INFO_CODES.has(e.code)) {

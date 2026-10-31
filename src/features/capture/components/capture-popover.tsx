@@ -27,6 +27,8 @@ import { cn } from "@/lib/utils";
 import { activeProjectId } from "@/features/projects/lib/active-project";
 
 import { CaptureDot } from "./capture-status";
+import { StatusRow } from "./status-row";
+import { invalidateProjectFacts } from "../lib/project-facts";
 
 import {
   DropdownMenu,
@@ -127,6 +129,13 @@ interface Props {
   /** Told when the binding changes, so the surrounding tab can re-read. */
   onChanged: () => void;
   onClose: () => void;
+  /**
+   * Render without the panel chrome (border, fill, blur, shadow, enter
+   * animation), for a host that already draws the surface — the session
+   * context overlay shows this as one of its views. The width stays 352px:
+   * the radar is laid out against it (`RADAR_ORIGIN_X`).
+   */
+  embedded?: boolean;
 }
 
 /**
@@ -188,10 +197,16 @@ type PromoteTab = "create" | "connect";
 function connectRefusal(candidates: unknown[]): string {
   return candidates.length > 0
     ? `${candidates.length} Projects share this repository’s root commit. Pick the right one — repositories created from the same template look identical here.`
-    : "The server did not recognise this pick. Reopen this tab to refresh the Project list.";
+    : "The server did not recognize this pick. Reopen this tab to refresh the Project list.";
 }
 
-export function CapturePopover({ projectPath, health, onChanged, onClose }: Props) {
+export function CapturePopover({
+  projectPath,
+  health,
+  onChanged,
+  onClose,
+  embedded = false,
+}: Props) {
   const signedIn = useAuthStore.use.snapshot().status === "signed-in";
   const organisations = useOrgStore.use.organisations();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
@@ -310,6 +325,9 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
       // pre-action state over a Project that changed is a lie. `load` never
       // clears `error` on success, so the failure stays visible.
       await load();
+      // Anything reading this project's capture facts (the overview's Session
+      // card) keeps them cached; tell it they moved.
+      invalidateProjectFacts(projectPath);
       onChanged();
       setBusy(false);
     }
@@ -319,11 +337,11 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
   // developer fixes elsewhere, so it is stated first, and the account-shaped
   // reasons only surface once it is resolved.
   const cloudReason = !gitAvailable
-    ? "Install git to share with an Organisation"
+    ? "Install git to share with an Organization"
     : !signedIn
-      ? "Sign in to share with an Organisation"
+      ? "Sign in to share with an Organization"
       : cloudOrgs.length === 0
-        ? `“${activeOrg?.name ?? "This Organisation"}” is local-only — sync it to use Cloud`
+        ? `“${activeOrg?.name ?? "This Organization"}” is local-only — sync it to use Cloud`
         : null;
 
   // See `loaded`: rendering before the first read flashes the wrong state.
@@ -332,13 +350,13 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
   return (
     <div
       className={cn(
-        "w-[352px] select-none overflow-hidden rounded-xl text-sm shadow-md",
+        "w-[352px] select-none overflow-hidden text-sm",
         // Border, translucent fill and blur all on THIS element — the same one
         // the enter animation transforms. Splitting them across a wrapper would
         // isolate the compositing layer and flatten the blur to flat
         // transparency (see the note beside the keyframes in globals.css).
-        "border border-[var(--atlas-element-active)] bg-[var(--card)]/95 backdrop-blur-2xl",
-        "atlas-panel-in-tl",
+        !embedded &&
+          "rounded-xl border border-[var(--atlas-element-active)] bg-[var(--card)]/95 shadow-md backdrop-blur-2xl atlas-panel-in-tl",
       )}
     >
       {/* A bound project opens onto the radar rather than a title bar: the panel
@@ -528,7 +546,7 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
 
         {view.kind === "promote-confirm" && (
           <DisclosureStep
-            title="Publish this Project to your Organisation?"
+            title="Publish this Project to your Organization?"
             lines={promotionLines(view.preview)}
             confirmLabel="Promote to Cloud"
             busy={busy}
@@ -609,7 +627,7 @@ function DisclosureStep({
         ))}
       </ul>
       <p className="text-2xs text-[var(--muted-foreground)]">
-        This makes the above visible to your Organisation. Nothing is sent until you confirm.
+        This makes the above visible to your Organization. Nothing is sent until you confirm.
       </p>
       <div className="flex justify-end gap-2 pt-0.5">
         <GhostButton label="Cancel" onClick={onCancel} disabled={busy} />
@@ -867,7 +885,7 @@ function CaptureRadar({ live, health }: { live: boolean; health: CaptureHealth |
       />
 
       <span className="absolute bottom-3 left-3.5 flex items-center gap-1.5">
-        <CaptureDot live={live} tone={live ? "success" : "idle"} />
+        <CaptureDot tone={live ? "success" : "idle"} />
         <span className="text-3xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
           {live ? "Capturing" : "Paused"}
         </span>
@@ -1200,7 +1218,7 @@ function UnboundState({
              *  where it read as Local being the thing that was broken. */}
             <p className={HINT}>
               {mode === "cloud"
-                ? "Shared with your Organisation."
+                ? "Shared with your Organization."
                 : "This machine only — no account needed."}
             </p>
           </div>
@@ -1433,7 +1451,7 @@ function CloudFields({
        *  someone else's timeline. */}
       <div className="flex items-center gap-2">
         <span className="w-[70px] shrink-0 text-xs text-[var(--muted-foreground)]">
-          Organisation
+          Organization
         </span>
         <span className="truncate text-xs text-[var(--secondary-foreground)]">
           {cloudOrgs[0]?.name ?? "—"}
@@ -1481,7 +1499,7 @@ function CloudFields({
             Restrict to named members
           </span>
           <span className="block text-2xs text-[var(--muted-foreground)]">
-            Otherwise every member of the Organisation can read it and push to it. You can change
+            Otherwise every member of the Organization can read it and push to it. You can change
             this later.
           </span>
         </span>
@@ -1517,7 +1535,7 @@ function SlugStatus({
         <>
           <X size={10} className="text-[var(--atlas-status-error-foreground)]" />
           <span className="text-[var(--atlas-status-error-foreground)]">
-            taken in this Organisation
+            taken in this Organization
           </span>
           {onConnectInstead && (
             <button
@@ -1633,19 +1651,19 @@ function ConnectTab({
       {options === undefined ? (
         <p className="flex items-center gap-1.5 py-2 text-xs text-[var(--muted-foreground)]">
           <Loader2 size={11} className="animate-spin" />
-          Fetching this Organisation's Projects…
+          Fetching this Organization's Projects…
         </p>
       ) : options === null ? (
         <p className="rounded-lg bg-[var(--atlas-status-warning-background)] px-2.5 py-1.5 text-xs text-[var(--atlas-status-warning-foreground)]">
           {listError
-            ? `Could not list this Organisation's Projects: ${listError}`
+            ? `Could not list this Organization's Projects: ${listError}`
             : "Could not reach the server. Check the connection and reopen this tab."}
         </p>
       ) : workspaces.length === 0 ? (
         <p className={cn(GROUP, "text-xs text-[var(--muted-foreground)]")}>
           {excludeId
-            ? "This Organisation has no other Projects to sync to."
-            : "This Organisation has no Projects yet. Create one from the Create tab instead."}
+            ? "This Organization has no other Projects to sync to."
+            : "This Organization has no Projects yet. Create one from the Create tab instead."}
         </p>
       ) : (
         <>
@@ -1680,7 +1698,7 @@ function ConnectTab({
                 <DropdownMenuItem
                   key={remote.id}
                   onClick={() => setSelected(remote.id)}
-                  className="items-start gap-2"
+                  className="items-start"
                 >
                   <Check
                     size={11}
@@ -1846,8 +1864,8 @@ function PromoteForm({
       <p className="text-sm font-medium text-[var(--foreground)]">Promote to Cloud</p>
       <p className="text-xs text-[var(--muted-foreground)]">
         {activeTab === "create"
-          ? "Everything captured here joins your Organisation's timeline. You'll see exactly what before anything is sent."
-          : "Attach this Project's history to a Project your Organisation already has. You'll see exactly what before anything is sent."}
+          ? "Everything captured here joins your Organization's timeline. You'll see exactly what before anything is sent."
+          : "Attach this Project's history to a Project your Organization already has. You'll see exactly what before anything is sent."}
       </p>
       <Tabs
         tab={activeTab}
@@ -2072,47 +2090,6 @@ function Detected({
   );
 }
 
-/** One finding: verdict icon, the value, and what the value is. */
-function StatusRow({
-  icon: Icon,
-  ok,
-  value,
-  caption,
-  mono = true,
-}: {
-  icon: typeof GitBranch;
-  ok: boolean;
-  value: string;
-  caption: string;
-  /** Paths, URLs and SHAs read better monospaced; counts and names do not. */
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <Icon
-        size={11}
-        strokeWidth={1.75}
-        className={cn(
-          "shrink-0",
-          ok ? "text-[var(--secondary-foreground)]" : "text-[var(--atlas-text-disabled)]",
-        )}
-      />
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-xs",
-          mono && "font-mono",
-          ok ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]",
-        )}
-      >
-        {value}
-      </span>
-      <span className="shrink-0 text-3xs uppercase tracking-[0.08em] text-[var(--atlas-text-disabled)]">
-        {caption}
-      </span>
-    </div>
-  );
-}
-
 /**
  * A small mock of what capture is *for*.
  *
@@ -2210,7 +2187,7 @@ function GitMissingBanner() {
       />
       <p className="min-w-0 text-xs text-[var(--secondary-foreground)]">
         Git is not installed on this machine. Sessions are still recorded, but they cannot be linked
-        to commits and cannot be shared with an Organisation.
+        to commits and cannot be shared with an Organization.
       </p>
     </div>
   );
@@ -2229,7 +2206,7 @@ function GitInitOffer({ busy, onGitInit }: { busy: boolean; onGitInit: () => voi
       <GitBranch size={12} className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
       <div className="min-w-0">
         <p className="text-xs text-[var(--secondary-foreground)]">
-          Sessions are recorded here already. Initialise git to also link them to the commits they
+          Sessions are recorded here already. Initialize git to also link them to the commits they
           produce.
         </p>
         <button
@@ -2238,7 +2215,7 @@ function GitInitOffer({ busy, onGitInit }: { busy: boolean; onGitInit: () => voi
           onClick={onGitInit}
           className="mt-1 cursor-pointer text-xs text-[var(--foreground)] underline underline-offset-2 transition-colors duration-150 hover:no-underline disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Initialise git
+          Initialize git
         </button>
       </div>
     </div>

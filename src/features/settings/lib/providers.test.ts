@@ -41,15 +41,14 @@ describe("MiniMax gateway recommendations", () => {
       "minimax/minimax-m2.7",
       "minimax/minimax-m3",
       "minimax/minimax-m3.1-flash",
-      "minimax/minimax-m3.1-flash:free",
     ];
     expect(curateModels("openrouter", live)).toEqual([
-      "minimax/minimax-m3.1-flash:free",
+      "minimax/minimax-m3.1-flash",
       "minimax/minimax-m3",
       "custom/unchanged-model",
     ]);
     expect(defaultModelFor("openrouter", curateModels("openrouter", live))).toBe(
-      "minimax/minimax-m3.1-flash:free",
+      "minimax/minimax-m3.1-flash",
     );
     expect(defaultModelFor("openrouter", curateModels("openrouter", live), live[1])).toBe(live[1]);
   });

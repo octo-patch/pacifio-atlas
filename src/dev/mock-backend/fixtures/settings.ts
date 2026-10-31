@@ -9,7 +9,6 @@
 // it, and `reveal` is the only call that ever returns a full value (Rust holds
 // the secret and ships `last4` in the list, so the fake does the same).
 
-import type { CliStatus } from "@/features/settings/components/settings-panel";
 import type { EnvEntry, EnvKeyMeta, ProfileInfo } from "@/features/settings/lib/byok-api";
 import type { ModelPrice } from "@/features/settings/stores/model-pricing-store";
 import type { KeybindingsLoadResult } from "@/features/keybindings/lib/keybindings-api";
@@ -132,8 +131,6 @@ function providerOf(envVar: string): string {
 export interface SettingsResponses {
   models_pricing_get: Record<string, ModelPrice>;
   models_pricing_refresh: Unread;
-  cli_status: CliStatus;
-  cli_install_helper: CliStatus;
   byok_env_list: EnvKeyMeta[];
   byok_env_entries: EnvEntry[];
   byok_profile_info: ProfileInfo;
@@ -143,7 +140,7 @@ export interface SettingsResponses {
   keybindings_load: KeybindingsLoadResult;
   keybindings_save: KeybindingsFile;
   keybindings_open: Unit;
-  keybindings_set_close_tab_accelerator: Unit;
+  menu_set_accelerators: Unit;
 }
 
 export const settingsHandlers: TypedHandlers<SettingsResponses> = {
@@ -159,24 +156,10 @@ export const settingsHandlers: TypedHandlers<SettingsResponses> = {
   keybindings_save: ({ file }): KeybindingsFile =>
     (file as KeybindingsFile) ?? DEFAULT_KEYBINDINGS_FILE,
   keybindings_open: () => null,
-  keybindings_set_close_tab_accelerator: () => null,
+  menu_set_accelerators: () => null,
 
   models_pricing_get: (): Record<string, ModelPrice> => PRICING,
   models_pricing_refresh: () => null,
-
-  cli_status: (): CliStatus => ({
-    installed: true,
-    path: "/Users/dev/.local/bin/atlas",
-    // Older than the running build — the "update available" line in General.
-    installedVersion: "0.3.1",
-    currentVersion: "0.0.0-mock",
-  }),
-  cli_install_helper: (): CliStatus => ({
-    installed: true,
-    path: "/Users/dev/.local/bin/atlas",
-    installedVersion: "0.0.0-mock",
-    currentVersion: "0.0.0-mock",
-  }),
 
   byok_env_list: (): EnvKeyMeta[] =>
     entries.map(({ provider, envVar, last4 }) => ({ provider, envVar, last4 })),

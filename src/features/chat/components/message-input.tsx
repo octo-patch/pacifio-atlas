@@ -2,6 +2,8 @@ import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } fr
 import { createPortal } from "react-dom";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { cn } from "@/lib/utils";
+import { CONTENT_COLUMN } from "../lib/row-metrics";
+import { insertedDraft, type ChatInsertDetail } from "../lib/response-selection";
 import { Hint } from "@/ui/tooltip";
 import {
   ArrowUp,
@@ -11,10 +13,7 @@ import {
   Check,
   Loader2,
   Brain,
-  Database,
-  Cpu,
   ChevronDown,
-  Search,
   Plus,
   RotateCw,
   AtSign,
@@ -46,19 +45,26 @@ import {
 import { AgentMark } from "@/components/agent-mark";
 import { loadNativeEffort } from "../lib/native-model-pref";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
-import { modelLabel } from "../lib/model-label";
-// `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
+import { capitalizeModelName, modelLabel } from "../lib/model-label";
+import { ModelPicker, type PickerAgent } from "./model-picker";
+import { onModelPickerRequest } from "../lib/model-picker-events";
+// `ChatInput` pulls in Tiptap and ProseMirror (the shared composer core).
 // We import it dynamically so the chunk is not in the initial preload set.
 // The import is kicked off at module-evaluation time (below, outside the
 // component) so the chunk starts downloading the moment this module is
 // reached in the import graph — *before* MessageInput even mounts. Until
 // the chunk resolves the composer renders a same-sized empty placeholder
-// so the panel doesn't reflow when CM lands.
+// so the panel doesn't reflow when the editor lands.
 //
 // `MentionPicker` only mounts when the user types `@`, so we let its chunk
 // load purely on demand — no eager preload (that would add a wasted Vite
 // roundtrip in dev for every MessageInput mount).
-import type { ChatInput as ChatInputComponent, ChatInputHandle } from "./chat-input";
+import type {
+  ChatInput as ChatInputComponent,
+  ChatInputHandle,
+  MentionTrigger,
+  SlashTrigger,
+} from "./chat-input";
 import type {
   MentionPicker as MentionPickerComponent,
   MentionPickerHandle,
@@ -74,13 +80,20 @@ import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { ComposerOptionsPill } from "./composer-options-pill";
 import { UsagePill } from "./usage-pill";
 import { composerPillLabelClass } from "./composer-dropup";
-import { ImageAttachmentStrip } from "./image-attachments";
 import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
-import { AiGrantBar } from "./ai-grant-bar";
+import { SleepPill } from "./sleep-pill";
+import { AiGrantBar, useAiGrantBarShown } from "./ai-grant-bar";
 import { RemovedAgentBar } from "./removed-agent-bar";
+import { BranchChangedBar } from "./branch-changed-bar";
 import { ModeRestoreBar, OPEN_MODE_PICKER_EVENT } from "./mode-restore-bar";
-import { useAiGrantProbe, useNoAiGrant } from "../stores/ai-grant-store";
+import { LiveElsewhereBar } from "./live-elsewhere-bar";
+import { useSendHeldForTerminal } from "../stores/live-elsewhere-store";
+import { useSessionProjectsStore } from "../stores/session-projects-store";
+import { SessionProjectsContext } from "../hooks/use-session-projects";
+import { attachSessionProject, type AttachSource } from "../lib/session-projects-api";
+import { useLiveElsewhereFeed } from "../hooks/use-live-elsewhere-feed";
+import { grantLocksComposer, useAiGrantProbe, useNoAiGrant } from "../stores/ai-grant-store";
 import {
   QUALITY_LADDER,
   aggregateExceedsBudget,
@@ -104,17 +117,18 @@ import { toast } from "sonner";
 import { useComposerFileDrop } from "../hooks/use-composer-file-drop";
 import { scratchPathForFile } from "@/lib/scratch-file";
 import { useAppStore } from "@/features/app/stores/app-store";
-import type { MentionTrigger } from "../lib/cm-mention-extension";
-import type { SlashTrigger } from "../lib/cm-slash-extension";
-// Value import — MUST come from the CodeMirror-free module, not from
-// `cm-slash-extension` (see `cm-clear-range.ts`), or the composer's dynamic
-// `import("./chat-input")` boundary below is defeated and the CodeMirror
-// vendor chunk lands in the eager boot graph.
-import { clearSlashRange } from "../lib/cm-clear-range";
+// Value imports from the composer stay editor-free: anything that imports
+// Tiptap at module scope would pull it into this eager module's graph and
+// defeat the dynamic `import("./chat-input")` boundary below.
+import { useComposerDraft } from "@/components/composer/use-composer-draft";
 import type { MentionData } from "../lib/mentions";
 import { COMMENT_LINK_EVENT, type CommentLinkDetail } from "../lib/comment-mentions";
+import { collapsePastes, pastedTextMention } from "../lib/pasted-text";
+import { collapseCites } from "../lib/cited-text";
+import { REVIEW_UNLINK_EVENT, type ReviewUnlinkDetail } from "../lib/review-comments";
+import { forgetSentTexts, rememberMention } from "../lib/mention-registry";
 
-// Start the CodeMirror chunk download at module-evaluation time. Vite still
+// Start the editor chunk download at module-evaluation time. Vite still
 // excludes it from `<link rel="modulepreload">` because the static analysis
 // only sees a dynamic `import()`. The promise is reused by every MessageInput
 // instance.
@@ -129,24 +143,9 @@ const slashCommandPickerPromise: Promise<typeof import("./slash-command-picker")
 // queue" hand back a stable reference instead of allocating per render.
 const EMPTY_QUEUE: readonly string[] = Object.freeze([]);
 
-/** Read an image `File` (clipboard paste) into a base64 attachment. Returns
- *  null for non-images. The `data:` URI prefix is stripped — the wire shape
- *  carries raw base64 + mime separately. */
-async function fileToImageAttachment(file: File): Promise<ImageAttachment | null> {
-  if (!file.type.startsWith("image/")) return null;
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  }).catch(() => null);
-  if (!dataUrl) return null;
-  const comma = dataUrl.indexOf(",");
-  return downscaleAttachment({
-    mimeType: file.type,
-    dataBase64: comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl,
-  });
-}
+/** A staged image: the wire attachment, plus the file it is, which joins it
+ *  to its chip in the prompt (`attachPaths`). */
+type StagedImage = ImageAttachment & { path: string };
 
 /**
  * Shrink an attachment that would not fit the gateway's body cap (D15c).
@@ -235,85 +234,6 @@ function acpModeColor(modeId: string | undefined): string {
   return "var(--muted-foreground)";
 }
 
-interface CodebaseIndexStatus {
-  indexed: boolean;
-  // Rust serializes this struct as camelCase (see codebase_index.rs).
-  fileCount: number;
-  summaryCount: number;
-  builtAtMs: number;
-}
-
-/** Codebase-index status pill for the native agent — the index that grounds
- *  `memory_search`. Shows file count (or "Index memory" when unbuilt), flips to
- *  "Indexing…" while the auto-indexer runs, and re-indexes on click. */
-function NativeMemoryPill() {
-  const projectPath = useAppStore((s) => s.currentProject?.path ?? null);
-  const [status, setStatus] = useState<CodebaseIndexStatus | null>(null);
-  const [indexing, setIndexing] = useState(false);
-
-  const refresh = useCallback(() => {
-    if (!projectPath) return;
-    invoke<CodebaseIndexStatus>("codebase_index_status", { projectPath })
-      .then(setStatus)
-      .catch(() => {});
-  }, [projectPath]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  // Track the auto-indexer (fired from App.tsx after a turn) for this project.
-  useEffect(() => {
-    const onIdx = (e: Event) => {
-      const d = (e as CustomEvent<{ path: string; active: boolean }>).detail;
-      if (!d || d.path !== projectPath) return;
-      setIndexing(d.active);
-      if (!d.active) refresh();
-    };
-    window.addEventListener("atlas:agent-index", onIdx);
-    return () => window.removeEventListener("atlas:agent-index", onIdx);
-  }, [projectPath, refresh]);
-
-  const reindex = () => {
-    if (!projectPath || indexing) return;
-    setIndexing(true);
-    void invoke("codebase_index_build", {
-      projectPath,
-      opts: { mode: "full", backend: "structural" },
-    })
-      .catch((err) => console.warn("manual codebase index failed:", err))
-      .finally(() => {
-        setIndexing(false);
-        refresh();
-      });
-  };
-
-  const label = indexing
-    ? "Indexing…"
-    : status?.indexed
-      ? `${status.fileCount} indexed`
-      : "Index memory";
-
-  return (
-    <button
-      onClick={reindex}
-      disabled={indexing}
-      title="Codebase index that grounds the agent's memory recall — click to re-index"
-      className="flex items-center px-2 h-6.5 rounded-full border border-[var(--border)] bg-[var(--card)] text-2xs leading-none font-medium text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] transition-colors cursor-pointer tabular-nums disabled:cursor-default"
-    >
-      {indexing ? (
-        <Loader2 size={11} className="animate-spin text-[var(--primary)]" />
-      ) : (
-        <Database
-          size={11}
-          className={status?.indexed ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
-        />
-      )}
-      <span className={composerPillLabelClass("early")}>{label}</span>
-    </button>
-  );
-}
-
 const EFFORT_CYCLE = ["", "low", "medium", "high", "max"] as const;
 
 /** Reasoning-effort pill for the native agent on Anthropic models (maps to a
@@ -360,8 +280,8 @@ function displayModeName(name: string): string {
   return /^[a-z][a-z0-9-]*$/.test(name) ? name.charAt(0).toUpperCase() + name.slice(1) : name;
 }
 
-type ComposerGroup = "agent" | "mode" | "model";
-const GROUP_ORDER: ComposerGroup[] = ["agent", "mode", "model"];
+type ComposerGroup = "model" | "mode";
+const GROUP_ORDER: ComposerGroup[] = ["model", "mode"];
 
 /** Colour class for the Claude permission-mode dot (mirrors the old pill). */
 function claudeModeDotClass(mode: ClaudePermissionMode): string {
@@ -381,7 +301,7 @@ function claudeModeDotClass(mode: ClaudePermissionMode): string {
 
 /**
  * The composer's grouped, animated picker — coding agent / permission mode /
- * model unified into one Skiper-style expanding menu. The pill row doubles as
+ * model unified into one expanding menu. The pill row doubles as
  * the tab strip: clicking a pill expands a shared panel above it with that
  * group's items; clicking another tab slides the content toward it
  * (direction-aware); outside click / Esc / re-click closes. While open, the
@@ -400,7 +320,7 @@ function ComposerGroupsMenu({
 }: {
   tabId: string;
   currentAgent: SwitchableAgent;
-  onSwitchAgent: (agent: SwitchableAgent) => void;
+  onSwitchAgent: (agent: SwitchableAgent, model?: string) => void;
 }) {
   const cycleAgentHint = useActionShortcut("chat.cycleAgent")?.label;
   const agentType = useChatStore((s) => s.sessions[tabId]?.agentType ?? "claude-code");
@@ -417,7 +337,6 @@ function ComposerGroupsMenu({
 
   const [openGroup, setOpenGroup] = useState<ComposerGroup | null>(null);
   const [dir, setDir] = useState(1);
-  const [q, setQ] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   // Measured content height driving the shared panel's height tween — group
   // switches (and async rows landing) morph the container instead of snapping.
@@ -457,7 +376,6 @@ function ComposerGroupsMenu({
   useEffect(() => {
     const onOpen = (e: Event) => {
       if ((e as CustomEvent<{ tabId?: string }>).detail?.tabId !== tabId) return;
-      setQ("");
       setOpenGroup("mode");
       // Mutual exclusion with the + menu — see atlas:composer-menu-open.
       window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "groups" }));
@@ -465,6 +383,20 @@ function ComposerGroupsMenu({
     window.addEventListener(OPEN_MODE_PICKER_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_MODE_PICKER_EVENT, onOpen);
   }, [tabId]);
+
+  // ⌘⇧M (`chat.toggleModelPicker`, dispatched by the chat panel) toggles the
+  // model group, as the reference's model-picker chord does.
+  useEffect(
+    () =>
+      onModelPickerRequest(tabId, () =>
+        setOpenGroup((cur) => {
+          if (cur === "model") return null;
+          window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "groups" }));
+          return "model";
+        }),
+      ),
+    [tabId],
+  );
 
   const isNative = agentType === "atlas-agent";
   const refreshingModels = useNativeModelsStore.use.refreshing();
@@ -485,33 +417,27 @@ function ComposerGroupsMenu({
     if (isNative) return [];
     return loadCachedAcpModels(agentType)?.availableModels ?? [];
   }, [availableModels, agentType, isNative]);
-  const filteredModels = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return models;
-    return models.filter(
-      (m) =>
-        m.name.toLowerCase().includes(s) ||
-        m.id.toLowerCase().includes(s) ||
-        (m.description ?? "").toLowerCase().includes(s),
-    );
-  }, [models, q]);
+
+  // Every switchable agent with the models it can offer: the session's own
+  // live list, and for the others what they advertised the last time they
+  // were bound. Re-read on open (and after a refresh) — the cache is
+  // localStorage, which nothing re-renders on.
+  const pickerAgents = useMemo((): PickerAgent[] => {
+    if (openGroup !== "model") return [];
+    const ids = switchableAgents.includes(agentType)
+      ? switchableAgents
+      : [agentType, ...switchableAgents];
+    return ids.map((a) => ({
+      agentType: a,
+      label: agentMeta(a).label,
+      models: a === agentType ? models : (loadCachedAcpModels(a)?.availableModels ?? []),
+    }));
+  }, [openGroup, switchableAgents, agentType, models, refreshingModels]);
 
   const isClaude = agentType === "claude-code";
   const hasAcpModes = !!availableModes && availableModes.length > 0;
   const showMode = isClaude || hasAcpModes || modesPending;
-  // The native agent shows the same model pill as everyone else. It used to be
-  // excluded here because its picker was the BYOK ProviderModelPills — a list
-  // of the user's own provider keys, which the gateway agent cannot use. The
-  // seam now publishes the gateway catalogue through the standard snapshot, so
-  // the exclusion would hide the right list to keep showing the wrong one.
-  //
-  // And shown for the native agent even when the list is EMPTY: an empty
-  // list is the gateway not having answered (ADR-0007), and the pill is where
-  // the refresh that fixes it lives. Hiding the pill would hide the fix.
-  const showModel = models.length > 0 || isNative;
-
   const toggle = (g: ComposerGroup) => {
-    setQ("");
     setOpenGroup((cur) => {
       if (cur === g) return null;
       if (cur) setDir(GROUP_ORDER.indexOf(g) > GROUP_ORDER.indexOf(cur) ? 1 : -1);
@@ -544,12 +470,27 @@ function ComposerGroupsMenu({
           the same surface — the reference's shared-layout feel. */}
       <div
         aria-hidden={!openGroup}
-        className="absolute bottom-full left-0 z-popover mb-1.5 w-[300px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-md"
+        className={cn(
+          // The app's own background (black, or white on a light theme) with
+          // a hairline ring: the grey `popover` fill read as a slab under the
+          // picker's tinted dividers.
+          //
+          // `transform-gpu`: the surface keeps its own compositing layer. The
+          // welcome cards above the composer lift on hover with a translate,
+          // which promotes THEM to a layer, and WebKit then painted that layer
+          // over the part of this panel it overlapped — the search bar and the
+          // fill vanished while the rows (painted later) stayed.
+          "absolute bottom-full left-0 z-popover mb-1.5 transform-gpu overflow-hidden rounded-lg bg-background text-foreground shadow-md ring-1 ring-foreground/10",
+          // The model group carries an agent rail beside its list, so it
+          // takes more room; the width tweens with the height.
+          openGroup === "model" ? "w-99" : "w-75",
+        )}
         style={{
           height: openGroup ? panelHeight : 0,
           opacity: openGroup ? 1 : 0,
           pointerEvents: openGroup ? "auto" : "none",
-          transition: "height 260ms cubic-bezier(0.32,0.72,0,1), opacity 180ms ease-out",
+          transition:
+            "height 260ms cubic-bezier(0.32,0.72,0,1), width 260ms cubic-bezier(0.32,0.72,0,1), opacity 180ms ease-out",
         }}
       >
         <div ref={contentRef}>
@@ -557,56 +498,6 @@ function ComposerGroupsMenu({
             key={openGroup ?? "none"}
             className={cn(dir > 0 ? "atlas-group-slide-left" : "atlas-group-slide-right")}
           >
-            {openGroup === "agent" && (
-              <div>
-                {/* What you have, and can switch to right now. */}
-                <div className="max-h-[240px] overflow-y-auto hide-scrollbar p-1">
-                  {switchableAgents.map((a) => {
-                    const active = a === currentAgent;
-                    return (
-                      <button
-                        key={a}
-                        onClick={() => {
-                          if (!active) onSwitchAgent(a as SwitchableAgent);
-                          close();
-                        }}
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                          active
-                            ? "bg-[var(--atlas-element-selected)]"
-                            : "hover:bg-[var(--atlas-element-hover)]",
-                        )}
-                      >
-                        <AgentMark agentType={a} className="!h-4 !w-4 !text-3xs !rounded" />
-                        <span className="flex-1 truncate label">{agentMeta(a).label}</span>
-                        {active && <Check size={11} className="text-[var(--primary)]" />}
-                      </button>
-                    );
-                  })}
-                </div>
-                {/* And what you could have. Atlas ships no ACP agents (ADR-0002),
-                    so without this a fresh profile's picker lists exactly one
-                    thing and reads like Atlas supports one agent. */}
-                <FeaturedAgentOffers
-                  onInstalled={(agentType) => {
-                    onSwitchAgent(agentType as SwitchableAgent);
-                    close();
-                  }}
-                />
-                <div className="h-px bg-[var(--border)]" />
-                <button
-                  onClick={() => {
-                    close();
-                    openSettingsSection("agents");
-                  }}
-                  className="flex w-full items-center gap-1.5 px-3 py-2 text-xs text-[var(--secondary-foreground)] transition-colors cursor-pointer hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
-                >
-                  <Plus size={11} className="shrink-0" />
-                  Add more agents
-                </button>
-              </div>
-            )}
-
             {openGroup === "mode" && isClaude && (
               <div className="p-1">
                 {CLAUDE_PERMISSION_MODES.map((m) => {
@@ -682,18 +573,20 @@ function ComposerGroupsMenu({
             )}
 
             {openGroup === "model" && (
-              <>
-                <div className="flex h-8 items-center gap-1.5 border-b border-[var(--atlas-border-subtle)] px-2.5">
-                  <Search size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                  <input
-                    autoFocus
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    placeholder="Search models…"
-                    spellCheck={false}
-                    className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-                  />
-                  {isNative && (
+              <ModelPicker
+                agents={pickerAgents}
+                currentAgent={agentType}
+                currentModel={currentModel}
+                onPick={(a, id) => {
+                  if (a === agentType) {
+                    if (id) setAcpModel(tabId, id);
+                  } else {
+                    onSwitchAgent(a as SwitchableAgent, id ?? undefined);
+                  }
+                  close();
+                }}
+                toolbar={(a) =>
+                  a === "atlas-agent" && (
                     // The gateway's list, re-fetched on demand (ADR-0007).
                     // Same icon, spin and disabled idiom as the grant bar's
                     // Refresh — no new pattern.
@@ -703,80 +596,83 @@ function ComposerGroupsMenu({
                         disabled={refreshingModels}
                         onClick={() => void refreshNativeModels()}
                         className={cn(
-                          "shrink-0 rounded p-0.5 text-[var(--muted-foreground)] transition-colors",
+                          "shrink-0 rounded p-0.5 text-muted-foreground transition-colors",
                           refreshingModels
                             ? "cursor-default"
-                            : "cursor-pointer hover:text-[var(--foreground)]",
+                            : "cursor-pointer hover:text-foreground",
                         )}
                       >
                         <RotateCw size={12} className={cn(refreshingModels && "animate-spin")} />
                       </button>
                     </Hint>
-                  )}
-                </div>
-                <div className="max-h-[280px] overflow-y-auto hide-scrollbar p-1">
-                  {filteredModels.length === 0 ? (
-                    <div className="px-2.5 py-2 text-xs text-[var(--muted-foreground)]">
+                  )
+                }
+                emptyState={(a) =>
+                  // An empty native list is the gateway not having answered
+                  // (ADR-0007), and the Refresh beside the search is the fix.
+                  a === "atlas-agent" ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
                       No models
-                      {isNative && models.length === 0 && (
-                        <span className="mt-0.5 block text-3xs leading-snug">
-                          Couldn't load the model list. Check your connection or sign in, then
-                          refresh.
-                        </span>
-                      )}
+                      <span className="mt-0.5 block caption">
+                        Couldn't load the model list. Check your connection or sign in, then
+                        refresh.
+                      </span>
                     </div>
-                  ) : (
-                    filteredModels.map((m) => {
-                      const active = m.id === currentModel;
-                      return (
-                        <button
-                          key={m.id}
-                          onClick={() => {
-                            setAcpModel(tabId, m.id);
-                            close();
-                          }}
-                          className={cn(
-                            "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                            active
-                              ? "bg-[var(--atlas-element-selected)]"
-                              : "hover:bg-[var(--atlas-element-hover)]",
-                          )}
-                        >
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5 label">
-                              <span className="truncate">{modelLabel(m)}</span>
-                              {active && (
-                                <Check size={11} className="shrink-0 text-[var(--primary)]" />
-                              )}
-                            </span>
-                            {m.description &&
-                              m.description.trim().toLowerCase() !== "recommended" && (
-                                <span className="mt-0.5 block text-3xs leading-snug text-[var(--muted-foreground)] line-clamp-2">
-                                  {m.description}
-                                </span>
-                              )}
-                          </span>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </>
+                  ) : undefined
+                }
+                addView={
+                  <div>
+                    {/* Atlas ships no ACP agents (ADR-0002), so without this a
+                        fresh profile's picker lists exactly one agent and reads
+                        like Atlas supports one. */}
+                    <FeaturedAgentOffers
+                      onInstalled={(installed) => {
+                        onSwitchAgent(installed as SwitchableAgent);
+                        close();
+                      }}
+                    />
+                    <div className="h-px bg-border-subtle" />
+                    <button
+                      onClick={() => {
+                        close();
+                        openSettingsSection("agents");
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-2 text-xs text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
+                    >
+                      <Plus size={11} className="shrink-0" />
+                      Add more agents
+                    </button>
+                  </div>
+                }
+              />
             )}
           </div>
         </div>
       </div>
 
-      {/* Pill tab strip */}
+      {/* Pill tab strip. One pill for the agent and its model: the agent's
+          mark, then the model — or the agent's name while it has no model
+          list to pick from. */}
       <button
-        onClick={() => toggle("agent")}
-        className={pillCls(openGroup === "agent")}
+        onClick={() => toggle("model")}
+        className={pillCls(openGroup === "model")}
         title={
-          cycleAgentHint ? `Coding agent — pick here, ${cycleAgentHint} cycles` : "Coding agent"
+          cycleAgentHint
+            ? `${agentMeta(currentAgent).label} — pick an agent and model here, ${cycleAgentHint} cycles agents`
+            : `${agentMeta(currentAgent).label} — pick an agent and model`
         }
       >
         <AgentMark agentType={agentType} className="!h-4 !w-4 !text-3xs !rounded" />
-        <span className={composerPillLabelClass("late")}>{agentMeta(currentAgent).label}</span>
+        <span
+          className={cn(composerPillLabelClass(), "max-w-[96px] truncate @[460px]:max-w-[140px]")}
+        >
+          {currentModelInfo
+            ? modelLabel(currentModelInfo)
+            : currentModel
+              ? capitalizeModelName(currentModel)
+              : agentMeta(currentAgent).label}
+        </span>
+        <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--muted-foreground)]" />
       </button>
 
       {showMode && (
@@ -807,22 +703,6 @@ function ComposerGroupsMenu({
                   ? "Loading…"
                   : "Mode"}
           </span>
-        </button>
-      )}
-
-      {showModel && (
-        <button
-          onClick={() => toggle("model")}
-          className={pillCls(openGroup === "model")}
-          title="Model"
-        >
-          <Cpu size={11} className="shrink-0 text-[var(--muted-foreground)]" />
-          <span
-            className={cn(composerPillLabelClass(), "max-w-[80px] truncate @[460px]:max-w-[120px]")}
-          >
-            {currentModelInfo ? modelLabel(currentModelInfo) : (currentModel ?? "Model")}
-          </span>
-          <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--muted-foreground)]" />
         </button>
       )}
     </div>
@@ -933,11 +813,25 @@ export function MessageInput({
   // button — the toolbar, and with it the switcher, stays live, so the user can
   // always move to an agent that runs. Verified against the escape hatch: this
   // must never disable the toolbar.
-  const blockedByGrant = noAiGrant && agentType === "atlas-agent";
+  //
+  // Never while a turn runs (`grantLocksComposer`): the lock used to disable
+  // the Stop button of a turn already admitted when the answer turned to no.
+  const blockedByGrant = grantLocksComposer(noAiGrant, agentType, running);
+  // While the no-grant strip shows it is the only one: the native agent cannot
+  // run at all, and any other notice above a locked input is noise beside it.
+  const grantBarShown = useAiGrantBarShown(running) && agentType === "atlas-agent";
   const disabled = disabledProp || blockedByGrant;
   // A resume could not restore the user's mode (`ModeRestoreBar`): no send
   // until they pick one. Only the send — typing and the mode picker stay live.
   const modeUnrestored = useChatStore((s) => !!s.sessions[tabId]?.unrestoredModeId);
+  // Another process is still writing this session: sends wait for "Send anyway".
+  // The composer feeds the live set itself, so the guard holds whichever view
+  // (sidebar, History, another project) the session was opened from.
+  const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId);
+  // The same read keeps the session's attached projects current for the
+  // project chips' access toggles (`session-projects-store`).
+  useLiveElsewhereFeed(!!acpSessionId);
+  const heldForTerminal = useSendHeldForTerminal(acpSessionId);
   // The BYOK provider/model bindings for the native agent stood here — the
   // provider pick, the model re-push on bind, the whole BYOK selection path.
   // Gone: the native agent's model comes from the seam's published catalogue
@@ -957,7 +851,7 @@ export function MessageInput({
     // Undefined = never set for this session → seed from the global pref.
     const eff = nativeEffort ?? loadNativeEffort();
     if (nativeBound || nativeEffort === undefined) setNativeEffort(tabId, eff);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, agentType, nativeBound]);
   // The RTK compression toggle was seeded and re-pushed here. It is gone with
   // the runtime that implemented it (#54) — the ported engine has no
@@ -966,7 +860,7 @@ export function MessageInput({
   // real command list via `available_commands_update` — Codex's arrives with
   // the binding, Claude's a few seconds after session/new (the SDK discovers
   // skills/plugins/MCP prompts first), and the native agent's with its
-  // session, published by the seam. Per ADR 0003 there is no fallback
+  // session, published by the seam. Per ADR 0005 there is no fallback
   // catalogue: the picker shows a loading state (see `slashCommandsLoading`
   // below) during that gap instead.
   const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
@@ -1040,49 +934,42 @@ export function MessageInput({
   }, [agentType, availableCommands]);
   const queue = useChatStore((s) => s.queues[tabId] ?? EMPTY_QUEUE);
 
-  // CodeMirror owns the document; React only needs the empty↔non-empty EDGE
-  // (for the submit button's tri-state). The old shape mirrored every doc
-  // change into `useState` — re-rendering this whole component, footer menus
-  // included, per keystroke — and ran an immer store write per keystroke via a
-  // draft-sync effect (fanning out to every chat-store selector in the app).
-  // Now the text lives in a ref, `hasText` flips only on the edge, and the
-  // per-tab draft mirror is a 300ms trailing debounce + a flush on unmount
-  // (tab switches unmount this component, so nothing is lost; the live-insert
-  // paths go through `atlas:chat-insert`, not the draft).
-  //
-  // Initial seed reads the per-tab draft from chat-store. `useState`'s lazy
-  // initializer runs once per mount with the mount-time tabId — exactly right.
-  const [initialDraft] = useState(() => useChatStore.getState().drafts[tabId] ?? "");
-  const valueRef = useRef(initialDraft);
-  const [hasText, setHasText] = useState(() => initialDraft.trim().length > 0);
+  // The editor owns the document; React only needs the empty↔non-empty EDGE
+  // (for the submit button's tri-state), which the editor reports as an edge
+  // (`onEmptyChange`) — a keystroke re-renders nothing here. The per-tab
+  // draft mirror is `useComposerDraft`: a 300ms trailing debounce + a flush on
+  // unmount (tab switches unmount this component, so nothing is lost; the
+  // live-insert paths go through `atlas:chat-insert`, not the draft).
   const inputRef = useRef<ChatInputHandle>(null);
-
   const { setDraft } = useChatStore.use.actions();
-  const draftTimer = useRef<number | null>(null);
-  // Every path that updates the composer — typing, slash insertion, queue
-  // recall — routes through this (it is the ChatInput onChange), so the ref,
-  // the edge state and the draft mirror can't drift apart.
-  const setValue = useCallback(
-    (text: string) => {
-      valueRef.current = text;
-      const next = text.trim().length > 0;
-      setHasText((prev) => (prev === next ? prev : next));
-      if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
-      draftTimer.current = window.setTimeout(() => {
-        draftTimer.current = null;
-        setDraft(tabId, valueRef.current);
-      }, 300);
-    },
-    [tabId, setDraft],
+  const draft = useComposerDraft(
+    tabId,
+    () => useChatStore.getState().drafts[tabId] ?? "",
+    (text) => setDraft(tabId, text),
+    () => inputRef.current?.getValue(),
   );
-  useEffect(() => {
-    return () => {
-      if (draftTimer.current !== null) window.clearTimeout(draftTimer.current);
-      setDraft(tabId, valueRef.current);
-    };
-  }, [tabId, setDraft]);
+  const valueRef = draft.latest;
+  const flushDraft = draft.flush;
+  const [hasText, setHasText] = useState(() => draft.initialValue.trim().length > 0);
+  const onEmptyChange = useCallback((blank: boolean) => setHasText(!blank), []);
+  // Every programmatic rewrite — reply, prefill, insert, queue recall — goes
+  // through here. Before the editor chunk has landed there is no editor to
+  // write to, so the text waits in the draft and seeds the editor on mount.
+  const writeComposer = useCallback(
+    (text: string) => {
+      const input = inputRef.current;
+      if (input) {
+        input.setValue(text);
+        return;
+      }
+      valueRef.current = text;
+      setHasText(text.trim().length > 0);
+      setDraft(tabId, text);
+    },
+    [tabId, setDraft, valueRef],
+  );
 
-  // The CM chunk started downloading at module-eval time (see the top of this
+  // The editor chunk started downloading at module-eval time (see the top of this
   // file). Mirror the resolution into component state so React re-renders
   // once the component class is available. We never render a textarea
   // fallback — instead the placeholder div below holds the layout slot at
@@ -1173,20 +1060,46 @@ export function MessageInput({
     return () => window.removeEventListener("atlas:auth-required", handler);
   }, [tabId]);
 
-  const handleMentionSelect = useCallback((mention: MentionData) => {
-    const t = triggerRef.current;
-    if (!t) return;
-    inputRef.current?.insertMention(mention, t.from, t.to);
-    // Trigger naturally closes when the doc no longer has an `@…` before
-    // the caret; the plugin will fire the null transition for us.
-  }, []);
+  // Picking a project or repo attaches it to the session, read-only, so its
+  // chip can offer the access toggle before the send. A session that has not
+  // bound yet attaches it at the send instead (`attach-mentioned-projects.ts`).
+  // A refused folder (home, a system folder) says why at the send, not here.
+  const attachPicked = useCallback(
+    (mention: MentionData, source: AttachSource = "mention") => {
+      if (mention.kind !== "workspace" && mention.kind !== "repo") return;
+      const sessionId = useChatStore.getState().sessions[tabId]?.acpSessionId;
+      if (!sessionId) return;
+      attachSessionProject(sessionId, mention.absPath, {
+        displayName: mention.displayName,
+        source,
+      })
+        .then((change) =>
+          useSessionProjectsStore.getState().actions.replace(sessionId, change.projects),
+        )
+        .catch(() => {});
+    },
+    [tabId],
+  );
+
+  const handleMentionSelect = useCallback(
+    (mention: MentionData) => {
+      const t = triggerRef.current;
+      if (!t) return;
+      inputRef.current?.insertMention(mention, { from: t.from, to: t.to });
+      attachPicked(mention);
+      // Trigger naturally closes when the doc no longer has an `@…` before
+      // the caret; the plugin will fire the null transition for us.
+    },
+    [attachPicked],
+  );
 
   // ── File chips ──────────────────────────────────────────────────────────
-  // A path the agent reads off disk. `attachPaths` (below) decides between
-  // this and an inline image; only that and the screenshot fallback call it.
+  // A path the agent reads off disk, as a chip at the caret. Every file with
+  // a path arrives through `attachPaths` (below), which calls this for all of
+  // them; an image the agent can take also stages its bytes.
   const composerRef = useRef<HTMLDivElement>(null);
   const insertFileChips = useCallback(
-    (paths: string[]) => {
+    (paths: string[], sizes?: ReadonlyMap<string, number>) => {
       const root = projectPath && !projectPath.endsWith("/") ? `${projectPath}/` : projectPath;
       for (const abs of paths) {
         // Relative-to-project display name when the file lives inside the
@@ -1199,22 +1112,26 @@ export function MessageInput({
           displayName,
           absPath: abs,
         };
-        inputRef.current?.insertMention(mention);
+        inputRef.current?.insertMention(mention, { sizeBytes: sizes?.get(abs) });
       }
       requestAnimationFrame(() => inputRef.current?.focus());
     },
     [projectPath],
   );
   // ── Image attachments (multimodal input) ─────────────────────────────────
-  // Images staged for the next send, shown as thumbnails above the input.
-  // Only populated when the bound agent advertised promptCapabilities.image;
-  // otherwise picked images degrade to path mention chips (any agent can
-  // read those off disk).
-  const [stagedImages, setStagedImages] = useState<ImageAttachment[]>([]);
-  const removeStagedImage = useCallback(
-    (index: number) => setStagedImages((prev) => prev.filter((_, j) => j !== index)),
-    [],
-  );
+  // Images staged for the next send. Only populated when the bound agent
+  // advertised promptCapabilities.image; otherwise picked images degrade to
+  // path mention chips (any agent can read those off disk).
+  //
+  // A staged image shows only as its chip in the prompt — no thumbnail strip
+  // above the field, which repeated what the chip already says. The chip and
+  // the staged bytes are one attachment, joined by `path`: deleting the chip
+  // drops the bytes (`handleDocChange`). The agent gets both the inline bytes
+  // (downscaled if over budget) and the path, which it can open at full size.
+  // The sent message still shows the images (`transcript-rows.tsx`).
+  const [stagedImages, setStagedImages] = useState<StagedImage[]>([]);
+  const stagedRef = useRef(stagedImages);
+  stagedRef.current = stagedImages;
   // Non-null (the repo's full_name) while a GitHub repo is cloning into
   // `.atlas/repos`. The composer is locked for the duration so the user can't
   // send a prompt that references a half-synced repo.
@@ -1271,31 +1188,38 @@ export function MessageInput({
   }, [stagedOverAggregateBudget]);
 
   // ── Attaching files by path ──────────────────────────────────────────────
-  // The one routing rule for every way a file with a path arrives — dropped
-  // from Finder, picked in the "+" menu, copied in Finder and pasted: images
-  // become inline base64 attachments when the agent supports them; everything
-  // else — and any image that won't read — becomes a path chip. A drop used to
-  // skip the image branch, so a dropped screenshot reached the agent as a path
-  // it might never open, while the same image pasted arrived inline.
+  // The one routing rule for every way a file arrives — dropped from Finder,
+  // picked in the "+" menu, copied in Finder and pasted, a pasted screenshot
+  // (spooled to a file first, `handlePasteImages`), the screenshot tool:
+  // every file becomes a chip at the caret, and an image the agent can take
+  // is staged inline as well, behind its chip. One routing
+  // for all of them, because the ways used to disagree: a paste staged a
+  // thumbnail and left nothing in the sentence, so "look at [this]" had no
+  // "this" in it; a drop made a chip and no thumbnail; and before that a
+  // dropped screenshot reached the agent as a path it might never open while
+  // the same image pasted arrived inline.
   const attachPaths = useCallback(
     async (paths: string[]) => {
-      const images: ImageAttachment[] = [];
-      const chipPaths: string[] = [];
+      const images: StagedImage[] = [];
+      const sizes = new Map<string, number>();
       for (const p of paths) {
         const mime = imageSupported ? imageMimeFromPath(p) : null;
-        if (mime) {
-          try {
-            const data = await invoke<string>("read_file_base64", { path: p });
-            images.push(await downscaleAttachment({ mimeType: mime, dataBase64: data }));
-            continue;
-          } catch {
-            // Unreadable as base64 → fall through to a path chip.
-          }
+        if (!mime) continue;
+        try {
+          const data = await invoke<string>("read_file_base64", { path: p });
+          // The file's size, from the base64 it came as (the padding makes
+          // this at most two bytes over).
+          sizes.set(p, Math.floor((data.length * 3) / 4));
+          images.push({
+            ...(await downscaleAttachment({ mimeType: mime, dataBase64: data })),
+            path: p,
+          });
+        } catch {
+          // Unreadable as base64: the chip alone, as for any other file.
         }
-        chipPaths.push(p);
       }
       if (images.length) setStagedImages((prev) => [...prev, ...images]);
-      if (chipPaths.length) insertFileChips(chipPaths);
+      insertFileChips(paths, sizes);
       requestAnimationFrame(() => inputRef.current?.focus());
     },
     [imageSupported, insertFileChips],
@@ -1307,18 +1231,11 @@ export function MessageInput({
   // seemingly at random. Each split pane has its own column, so a drop still
   // lands in the pane under the cursor. Outside a chat panel, the composer.
   //
-  // A drop ALWAYS becomes an inline `@file` chip at the caret — it does not go
-  // through `attachPaths`, and an image is no exception. Dragging a file into
-  // the conversation is a pointing gesture: "this one, here, in the sentence I
-  // am writing". Routing a dropped image to the thumbnail strip above the
-  // field answered a question the user had not asked — it detached the file
-  // from the place they aimed it, and left the prompt with no reference to it
-  // at all, so the sentence read "look at this" with no "this" in it. The
-  // explicit attach gestures ("+" ▸ Add files / Attach media, and paste) still
-  // route through `attachPaths`, where a thumbnail IS the thing being asked
-  // for. The chip carries the absolute path, which rides to the agent as an
-  // ACP `ResourceLink` (`compose_prompt`) — every agent reads those, and a
-  // vision agent opens the image itself.
+  // A drop is a pointing gesture — "this one, here, in the sentence I am
+  // writing" — and `attachPaths` keeps that: the chip lands at the caret, and
+  // an image's staged bytes ride along with it. The chip carries the
+  // absolute path, which rides to the agent as an ACP `ResourceLink`
+  // (`compose_prompt`) — every agent reads those.
   const dropZoneRef = useRef<HTMLElement | null>(null);
   const [dropZoneEl, setDropZoneEl] = useState<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -1327,12 +1244,57 @@ export function MessageInput({
     dropZoneRef.current = zone;
     setDropZoneEl(zone);
   }, []);
-  const onDropFiles = useCallback((paths: string[]) => insertFileChips(paths), [insertFileChips]);
+  const onDropFiles = useCallback((paths: string[]) => void attachPaths(paths), [attachPaths]);
   const { isDropTarget } = useComposerFileDrop({
     targetRef: dropZoneRef,
     enabled: !disabled,
     onDropFiles,
   });
+
+  // Two forms. Focused, the input card with its toolbar tray tucked under
+  // it; away from the composer, the input alone as a capsule, the tray slid
+  // up behind it and the composer's height closed up after it. Anything in
+  // the composer — text, a staged image, a queued message, an open picker or
+  // menu — keeps it open, so nothing is hidden mid-task.
+  const [composerFocused, setComposerFocused] = useState(false);
+  const collapsible =
+    !hasText &&
+    stagedImages.length === 0 &&
+    queue.length === 0 &&
+    trigger === null &&
+    slashTrigger === null &&
+    githubSyncing === null &&
+    !isDropTarget;
+  const collapsed = collapsible && !composerFocused;
+  // What folds it: focus moving to something ELSE (Tab away), a press
+  // outside it, or Esc. Not focus merely leaving: WebKit does not focus a
+  // button on click, so pressing a tray pill drops focus to <body> — read as
+  // "left", that folded the tray out from under the pill being pressed.
+  // Never while one of its menus is open (they may live in a portal), nor
+  // when the WINDOW lost focus (switching apps is not leaving the composer).
+  const composerMenuOpen = () =>
+    !!composerRef.current?.querySelector("[data-popup-open], [aria-expanded='true']");
+  const onComposerBlur = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (!document.hasFocus()) return;
+      const root = composerRef.current;
+      const active = document.activeElement;
+      if (!root || !active || active === document.body) return;
+      if (root.contains(active) || composerMenuOpen()) return;
+      setComposerFocused(false);
+    });
+  }, []);
+  useEffect(() => {
+    if (!composerFocused) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const root = composerRef.current;
+      if (!root || !(event.target instanceof Node) || root.contains(event.target)) return;
+      if (composerMenuOpen()) return;
+      setComposerFocused(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [composerFocused]);
 
   // "+" menu → "Add files or photos". The Tauri dialog hands back real
   // paths (a browser file input wouldn't), which is what makes the
@@ -1351,10 +1313,14 @@ export function MessageInput({
     }
   }, [attachPaths]);
 
-  const handlePickProject = useCallback((project: MentionProject) => {
-    inputRef.current?.insertMention(project);
-    requestAnimationFrame(() => inputRef.current?.focus());
-  }, []);
+  const handlePickProject = useCallback(
+    (project: MentionProject) => {
+      inputRef.current?.insertMention(project);
+      attachPicked(project);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    },
+    [attachPicked],
+  );
 
   // "+" menu → "Attach media". The files picker, with the OS dialog filtered
   // to image/video extensions; video becomes a path chip via `attachPaths`.
@@ -1395,8 +1361,7 @@ export function MessageInput({
 
   // "+" menu → "Take a screenshot". Shells out to the native macOS
   // `screencapture` CLI (region selection or whole desktop), then attaches the
-  // PNG — inline (multimodal) when the agent supports images, else as an @file
-  // chip pointing at the saved `.atlas/screenshots/…` path.
+  // saved `.atlas/screenshots/…` PNG like any other file (`attachPaths`).
   const handleTakeScreenshot = useCallback(
     async (mode: "region" | "full") => {
       try {
@@ -1404,29 +1369,17 @@ export function MessageInput({
         // in a whole-desktop capture.
         await new Promise((r) => setTimeout(r, 250));
         const proj = useAppStore.getState().currentProject?.path ?? null;
-        const res = await invoke<{
-          path: string;
-          mimeType: string;
-          dataBase64: string;
-        } | null>("capture_screenshot", { mode, projectPath: proj });
+        const res = await invoke<{ path: string } | null>("capture_screenshot", {
+          mode,
+          projectPath: proj,
+        });
         if (!res) return; // cancelled (Esc during region select)
-        if (imageSupported) {
-          // Shrunk before it is staged, not inside the updater — the state
-          // callback is synchronous and cannot await.
-          const shrunk = await downscaleAttachment({
-            mimeType: res.mimeType,
-            dataBase64: res.dataBase64,
-          });
-          setStagedImages((prev) => [...prev, shrunk]);
-        } else {
-          insertFileChips([res.path]);
-        }
-        requestAnimationFrame(() => inputRef.current?.focus());
+        await attachPaths([res.path]);
       } catch (err) {
         toast.error(`Screenshot failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
-    [imageSupported, insertFileChips],
+    [attachPaths],
   );
 
   // "+" menu → "Add from GitHub". Shorthand for the GitHub panel's search+clone:
@@ -1434,41 +1387,45 @@ export function MessageInput({
   // syncs, then drop a `@repo:` chip carrying the local path so the agent
   // explores it (compose_prompt turns that chip into an "explore this repo"
   // block pointing at the absolute path).
-  const handleCloneRepo = useCallback(async (repo: GithubRepo) => {
-    const proj = useAppStore.getState().currentProject?.path;
-    if (!proj) {
-      toast.error("Open a project before cloning a repo.");
-      return;
-    }
-    setGithubSyncing(repo.full_name);
-    try {
-      const dest = await invoke<string>("clone_github_repo", {
-        projectPath: proj,
-        cloneUrl: repo.clone_url,
-        repoName: repo.full_name.replace(/\//g, "-"),
-        meta: metaFromSearch(repo),
-      });
-      const folderName = dest.split("/").pop() || repo.full_name.replace(/\//g, "-");
-      const mention: MentionRepo = {
-        kind: "repo",
-        id: dest,
-        displayName: folderName,
-        absPath: dest,
-        hasReadme: false,
-      };
-      inputRef.current?.insertMention(mention);
-      // Keep the knowledge sidebar's cloned-repos list in sync (same signal the
-      // GitHub panel emits).
-      window.dispatchEvent(new Event("atlas:repo-cloned"));
-      requestAnimationFrame(() => inputRef.current?.focus());
-    } catch (err) {
-      toast.error(
-        `Couldn't clone ${repo.full_name}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    } finally {
-      setGithubSyncing(null);
-    }
-  }, []);
+  const handleCloneRepo = useCallback(
+    async (repo: GithubRepo) => {
+      const proj = useAppStore.getState().currentProject?.path;
+      if (!proj) {
+        toast.error("Open a project before cloning a repo.");
+        return;
+      }
+      setGithubSyncing(repo.full_name);
+      try {
+        const dest = await invoke<string>("clone_github_repo", {
+          projectPath: proj,
+          cloneUrl: repo.clone_url,
+          repoName: repo.full_name.replace(/\//g, "-"),
+          meta: metaFromSearch(repo),
+        });
+        const folderName = dest.split("/").pop() || repo.full_name.replace(/\//g, "-");
+        const mention: MentionRepo = {
+          kind: "repo",
+          id: dest,
+          displayName: folderName,
+          absPath: dest,
+          hasReadme: false,
+        };
+        inputRef.current?.insertMention(mention);
+        attachPicked(mention, "clone");
+        // Keep the knowledge sidebar's cloned-repos list in sync (same signal the
+        // GitHub panel emits).
+        window.dispatchEvent(new Event("atlas:repo-cloned"));
+        requestAnimationFrame(() => inputRef.current?.focus());
+      } catch (err) {
+        toast.error(
+          `Couldn't clone ${repo.full_name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        setGithubSyncing(null);
+      }
+    },
+    [attachPicked],
+  );
 
   // "+" menu → "Attach a session". Reference a past session's transcript; the
   // (potentially large) body is read + formatted at send time by composePrompt.
@@ -1488,36 +1445,54 @@ export function MessageInput({
   // "+" menu footer → agent switcher. Same helper as ⌥/ and the agent pill,
   // but jumps straight to the picked agent instead of cycling.
   const handleSwitchAgent = useCallback(
-    (next: SwitchableAgent) => switchAgentForTab(tabId, next),
+    (next: SwitchableAgent, model?: string) => switchAgentForTab(tabId, next, { model }),
     [tabId],
   );
 
-  // Clipboard images (screenshots) → staged attachments. Returning false
-  // lets chat-input's default file-paste (native pasteboard → quoted paths)
-  // handle everything else.
-  // A pasted screenshot is bytes with no path. Inline when the agent takes
-  // images; otherwise spooled to a scratch file and attached as a path chip,
-  // like the screenshot tool does — declining it left the paste to a handler
-  // that only knows Finder paths, and the image vanished without a word.
+  // Clipboard images (screenshots). A pasted screenshot is bytes with no
+  // path, so it is spooled to a scratch file first and then attached like
+  // every other file (`attachPaths`): a chip in the sentence, with its bytes
+  // staged when the agent takes images. Taking the paste either way matters —
+  // declining it left the paste to a handler that only knows Finder paths,
+  // and the image vanished without a word.
   const handlePasteImages = useCallback(
     (files: File[]) => {
-      if (imageSupported) {
-        void Promise.all(files.map(fileToImageAttachment)).then((atts) => {
-          const ok = atts.filter((a): a is ImageAttachment => a !== null);
-          if (ok.length) setStagedImages((prev) => [...prev, ...ok]);
-        });
-        return true;
-      }
       void Promise.all(files.map(scratchPathForFile))
-        .then(insertFileChips)
+        .then(attachPaths)
         .catch((err) => {
           console.warn("image paste failed:", err);
           toast.error("Could not attach the pasted image.");
         });
       return true;
     },
-    [imageSupported, insertFileChips],
+    [attachPaths],
   );
+
+  // The draft mirror's doc listener, plus pruning: a chip the user deleted
+  // (Backspace, ⌘Z, a cleared draft) takes its staged image with it. Checked
+  // only while an image is staged, so the common keystroke pays nothing.
+  const { onDocChange: mirrorDraft } = draft;
+  const handleDocChange = useCallback(() => {
+    mirrorDraft();
+    if (!stagedRef.current.some((img) => img.path)) return;
+    const input = inputRef.current;
+    if (!input) return;
+    setStagedImages((prev) => {
+      const next = prev.filter((img) => !img.path || input.hasMention("file", img.path));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [mirrorDraft]);
+
+  // A paste over the large-paste limit (`isLargePaste`: ~4,000 characters or
+  // 80 lines) — a log, a stack dump, a whole file — becomes a chip holding
+  // the whole text, so the editor never lays it out. The text goes to the
+  // agent in full at send, in whichever form it accepts (`pasted-text.ts`).
+  const handlePasteLargeText = useCallback((text: string) => {
+    const input = inputRef.current;
+    if (!input) return false;
+    input.insertMention(pastedTextMention(text));
+    return true;
+  }, []);
 
   // `submit` (below) is defined after `handleSlashSelect` but the latter
   // needs to invoke it — routed through a ref (set right after `submit` is
@@ -1529,14 +1504,16 @@ export function MessageInput({
   const handleSlashSelect = useCallback(
     (cmd: SlashCommand) => {
       const t = slashTriggerRef.current;
-      const view = inputRef.current?.view();
-      if (!t || !view) return;
+      const input = inputRef.current;
+      if (!t || !input) return;
+      // An Atlas-local command leaves no literal `/login` behind.
+      const clearSlashRange = () => input.replaceRange(t.from, t.to, "");
 
       if (cmd.handler === "agent-login") {
         // An Atlas-handled command (S1): every agent opens the same
         // `AgentOAuthModal`. `reason` is passed so the modal can tell an
         // "agent wants a provider key" failure from a plain "not signed in".
-        clearSlashRange(view, t.from, t.to);
+        clearSlashRange();
         setSlashTrigger(null);
         promptSignIn(agentType, { reason: lastAuthReasonRef.current ?? undefined });
         inputRef.current?.focus();
@@ -1544,7 +1521,7 @@ export function MessageInput({
       }
       if (cmd.handler === "fork") {
         // Same flow as the header's "branch from here" menu item.
-        clearSlashRange(view, t.from, t.to);
+        clearSlashRange();
         setSlashTrigger(null);
         forkSessionToNewTab(tabId);
         inputRef.current?.focus();
@@ -1566,7 +1543,7 @@ export function MessageInput({
       // agent would just surface an error. `/login` bypasses this gate
       // above because it's the path that fixes "not authed".
       if (disabled) {
-        clearSlashRange(view, t.from, t.to);
+        clearSlashRange();
         setSlashTrigger(null);
         return;
       }
@@ -1574,13 +1551,9 @@ export function MessageInput({
         // Drop `/<name> ` into the composer and put the caret at the
         // end so the user can fill in the required args. Don't send
         // until they press Enter.
-        const insertText = `/${cmd.name} `;
-        view.dispatch({
-          changes: { from: t.from, to: t.to, insert: insertText },
-          selection: { anchor: t.from + insertText.length },
-        });
+        input.replaceRange(t.from, t.to, `/${cmd.name} `);
         setSlashTrigger(null);
-        inputRef.current?.focus();
+        input.focus();
         return;
       }
 
@@ -1588,11 +1561,7 @@ export function MessageInput({
       // typed token (the query may be a prefix, e.g. "he" → "help"). Since
       // the trigger can sit mid-message, replacing just [from, to] preserves
       // any surrounding text instead of wiping the whole composer.
-      const insertText = `/${cmd.name}`;
-      view.dispatch({
-        changes: { from: t.from, to: t.to, insert: insertText },
-        selection: { anchor: t.from + insertText.length },
-      });
+      input.replaceRange(t.from, t.to, `/${cmd.name}`);
       setSlashTrigger(null);
       if (!t.atStart) {
         // Mid-message: complete the text and stop. Only a command at byte 0
@@ -1610,7 +1579,7 @@ export function MessageInput({
     [disabled, agentType, tabId],
   );
 
-  // Forward Up/Down/Enter/Esc/Backspace/Tab from CodeMirror to whichever
+  // Forward Up/Down/Enter/Esc/Backspace/Tab from the editor to whichever
   // picker is open. Slash and mention pickers are mutually exclusive in
   // practice (each trigger requires its own sigil to open the token being
   // typed), but we still route deterministically.
@@ -1633,7 +1602,7 @@ export function MessageInput({
             setSlashTrigger(null);
             return true;
           case "Backspace":
-            // Let CM delete a query char or the `/` itself (which closes
+            // Let the editor delete a query char or the `/` itself (which closes
             // the picker via the trigger detector).
             return false;
           case "Tab": {
@@ -1654,13 +1623,7 @@ export function MessageInput({
             // lands right after a trailing space, which the trigger
             // detector reads as "hit whitespace" and closes the picker on
             // its own — same as if the user had typed the space by hand.
-            const view = inputRef.current?.view();
-            if (!view) return true;
-            const insertText = `/${active.name} `;
-            view.dispatch({
-              changes: { from: st.from, to: st.to, insert: insertText },
-              selection: { anchor: st.from + insertText.length },
-            });
+            inputRef.current?.replaceRange(st.from, st.to, `/${active.name} `);
             return true;
           }
         }
@@ -1685,14 +1648,14 @@ export function MessageInput({
           return true;
         case "Backspace":
           // Only consume Backspace when at a sublevel AND the query is
-          // empty — otherwise let CM delete a character in the query (or
+          // empty — otherwise let the editor delete a character in the query (or
           // the `@` itself, which closes the picker via the trigger
           // detector).
           if (t.query === "" && p.goBack()) return true;
           return false;
         case "Tab":
-          // Not handled for the mention picker — fall through to CM's
-          // default Tab handling (list indent / outdent).
+          // Not handled for the mention picker — fall through to the
+          // composer's Tab (list indent / outdent).
           return false;
       }
     },
@@ -1700,7 +1663,7 @@ export function MessageInput({
   );
 
   // Auto-focus the composer whenever this panel mounts (tab switch back into
-  // chat). If the CodeMirror chunk hasn't resolved yet, the next re-render
+  // chat). If the editor chunk hasn't resolved yet, the next re-render
   // (driven by `LazyChatInput` flipping non-null) re-runs this effect and
   // focuses the real input as soon as it exists.
   useEffect(() => {
@@ -1717,15 +1680,13 @@ export function MessageInput({
         .split("\n")
         .map((l) => `> ${l}`)
         .join("\n");
-      const cur = inputRef.current?.getValue() ?? "";
-      const next = `${quoted}\n\n${cur}`;
-      inputRef.current?.setValue(next);
-      setValue(next);
+      const cur = inputRef.current?.getValue() ?? valueRef.current;
+      writeComposer(`${quoted}\n\n${cur}`);
       requestAnimationFrame(() => inputRef.current?.focus());
     };
     window.addEventListener("atlas:chat-reply", handler);
     return () => window.removeEventListener("atlas:chat-reply", handler);
-  }, []);
+  }, [writeComposer, valueRef]);
 
   // Prefill the composer with raw text (empty-state prompt chips, a user row's
   // "Edit as new message"). Unlike "reply" this replaces the value verbatim (no
@@ -1740,16 +1701,14 @@ export function MessageInput({
       if (!detail?.text) return;
       if (detail.tabId != null && detail.tabId !== tabId) return;
       const previous = inputRef.current?.getValue() ?? valueRef.current;
-      inputRef.current?.setValue(detail.text);
-      setValue(detail.text);
+      writeComposer(detail.text);
       requestAnimationFrame(() => inputRef.current?.focus());
       if (previous.trim() && previous !== detail.text) {
         toast("Replaced your draft", {
           action: {
             label: "Undo",
             onClick: () => {
-              inputRef.current?.setValue(previous);
-              setValue(previous);
+              writeComposer(previous);
               requestAnimationFrame(() => inputRef.current?.focus());
             },
           },
@@ -1758,7 +1717,7 @@ export function MessageInput({
     };
     window.addEventListener("atlas:chat-prefill", handler);
     return () => window.removeEventListener("atlas:chat-prefill", handler);
-  }, [tabId, setValue]);
+  }, [tabId, writeComposer, valueRef]);
 
   // Focus the composer on demand. The sidebar "+ new chat" button fires this
   // when it reuses an already-empty tab: no remount happens in that case, so
@@ -1779,33 +1738,22 @@ export function MessageInput({
   // the ACTIVE session reacts, so it doesn't fan out to every mounted chat tab.
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ text: string; tabId?: string }>).detail;
+      const detail = (e as CustomEvent<ChatInsertDetail>).detail;
       if (!detail?.text) return;
-      if (detail.tabId) {
-        // Tab-targeted insert (KB "send selection to chat"). The sender
-        // already appended to this tab's draft, so `text` is the full
-        // composed value — replace, don't append, to avoid doubling.
-        if (detail.tabId !== tabId) return;
-        inputRef.current?.setValue(detail.text);
-        setValue(detail.text);
-      } else {
-        // Legacy untargeted insert — only the active session reacts and
-        // the text is appended to whatever's already in the composer.
-        if (useChatStore.getState().activeSessionId !== tabId) return;
-        const cur = inputRef.current?.getValue() ?? "";
-        const next = cur.trim() ? `${cur}\n\n${detail.text}` : detail.text;
-        inputRef.current?.setValue(next);
-        setValue(next);
-      }
+      if (detail.tabId ? detail.tabId !== tabId : useChatStore.getState().activeSessionId !== tabId)
+        return;
+      const cur = inputRef.current?.getValue() ?? valueRef.current;
+      writeComposer(insertedDraft(cur, detail));
       requestAnimationFrame(() => inputRef.current?.focus());
     };
     window.addEventListener("atlas:chat-insert", handler);
     return () => window.removeEventListener("atlas:chat-insert", handler);
-  }, [tabId]);
+  }, [tabId, writeComposer, valueRef]);
 
-  // A comment popover's link button: this tab's own recorded session's
-  // comment, as a chip at the caret. Linking one already in the draft just
-  // focuses — the agent needs to be pointed at it once.
+  // A comment popover's link button (this tab's own recorded session's
+  // comment) or a reply passage's Cite, as a chip at the caret. Linking one
+  // already in the draft just focuses — the agent needs to be pointed at it
+  // once.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<CommentLinkDetail>).detail;
@@ -1814,22 +1762,34 @@ export function MessageInput({
       if (!input) return;
       const linked = input
         .getMentions()
-        .some((m) => m.kind === "comment" && m.id === detail.mention.id);
-      if (!linked) {
-        const view = input.view();
-        const doc = view?.state.doc;
-        const head = view?.state.selection.main.head ?? 0;
-        const before = doc && head > 0 ? doc.sliceString(head - 1, head) : "";
-        if (before && !/\s/.test(before)) {
-          view?.dispatch({ changes: { from: head, insert: " " }, selection: { anchor: head + 1 } });
-        }
-        input.insertMention(detail.mention);
-      }
+        .some((m) => m.kind === detail.mention.kind && m.id === detail.mention.id);
+      if (!linked) input.insertMention(detail.mention, { padBefore: true });
+      // Handled: the cite popover closes only on this (`linkCiteToComposer`).
+      e.preventDefault();
+      // Now, not after the debounce: the diff draws a review comment back
+      // from the draft (`useComposerReviewComments`).
+      if (detail.mention.kind === "review_comment") flushDraft();
       requestAnimationFrame(() => inputRef.current?.focus());
     };
     window.addEventListener(COMMENT_LINK_EVENT, handler);
     return () => window.removeEventListener(COMMENT_LINK_EVENT, handler);
-  }, [tabId, disabled]);
+  }, [tabId, disabled, flushDraft]);
+
+  // A review comment deleted where it was written (its annotation in the
+  // diff or the file view): its chip leaves the prompt too.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<ReviewUnlinkDetail>).detail;
+      if (!detail || detail.tabId !== tabId) return;
+      const input = inputRef.current;
+      if (!input) return;
+      input.removeMention("review_comment", detail.id);
+      e.preventDefault();
+      flushDraft();
+    };
+    window.addEventListener(REVIEW_UNLINK_EVENT, handler);
+    return () => window.removeEventListener(REVIEW_UNLINK_EVENT, handler);
+  }, [tabId, flushDraft]);
 
   // An agent switch with `agentSwitchBehavior: "handoff"`: the conversation
   // the tab just left, as a past-session chip at the start of the draft, so
@@ -1843,7 +1803,7 @@ export function MessageInput({
       const attached = input
         .getMentions()
         .some((m) => m.kind === "past_session" && m.id === detail.mention.id);
-      if (!attached) input.insertMention(detail.mention, 0, 0);
+      if (!attached) input.insertMention(detail.mention, { atStart: true });
       requestAnimationFrame(() => inputRef.current?.focus());
     };
     window.addEventListener(SESSION_HANDOFF_EVENT, handler);
@@ -1869,15 +1829,17 @@ export function MessageInput({
     // too). They drive app affordances, so they never reach the agent.
     if (trimmed === "/fork" && agentCatalogEntry(agentType)?.supportsFork === true) {
       forkSessionToNewTab(tabId);
-      inputRef.current?.clear();
-      setValue("");
+      writeComposer("");
       return;
     }
     if (trimmed === "/queue" || trimmed.startsWith("/queue ")) {
       const queued = trimmed.slice("/queue".length).trim();
-      if (queued) enqueueMessage(tabId, queued);
-      inputRef.current?.clear();
-      setValue("");
+      if (queued) {
+        const mentions = inputRef.current?.getMentions() ?? [];
+        enqueueMessage(tabId, queued, mentions);
+        forgetSentTexts(mentions);
+      }
+      writeComposer("");
       return;
     }
     const mentions = inputRef.current?.getMentions() ?? [];
@@ -1886,20 +1848,26 @@ export function MessageInput({
       // strings and the agent will see whatever shortform text was in the
       // composer. Mentions are dropped here intentionally; promoting the
       // queue to a structured shape is a follow-up. Staged images likewise
-      // stay in the composer strip and ride the next direct send.
-      enqueueMessage(tabId, trimmed);
+      // stay in the composer strip and ride the next direct send. A paste or
+      // a cite is the exception: its token alone would lose what the user
+      // pasted or cited, so the queue puts its text into the queued string.
+      enqueueMessage(tabId, trimmed, mentions);
+      forgetSentTexts(mentions);
     } else {
-      if (modeUnrestored) return;
-      const images = stagedImages;
+      if (modeUnrestored || heldForTerminal) return;
+      // The wire shape is mime + bytes; the path stays with the composer.
+      const images = stagedImages.map(({ path: _path, ...img }) => img);
       onSend(trimmed, mentions, images.length ? images : undefined);
+      forgetSentTexts(mentions);
       if (images.length) setStagedImages([]);
     }
-    inputRef.current?.clear();
-    setValue("");
+    // Through `setValue`, not `clear`, so the send is one undo step away.
+    writeComposer("");
     // The debounced draft mirror will collapse the empty value into a
     // `delete s.drafts[tabId]`, so no explicit clearDraft call is needed.
   }, [
-    setValue,
+    writeComposer,
+    valueRef,
     running,
     onSend,
     onStop,
@@ -1910,6 +1878,7 @@ export function MessageInput({
     stagedImages,
     githubSyncing,
     modeUnrestored,
+    heldForTerminal,
   ]);
   submitRef.current = submit;
 
@@ -1920,7 +1889,11 @@ export function MessageInput({
   type Mode = "send" | "queue" | "stop";
   const mode: Mode = running ? (hasText ? "queue" : "stop") : "send";
   const buttonEnabled =
-    disabled || (mode === "send" && modeUnrestored) ? false : mode === "stop" ? true : hasText;
+    disabled || (mode === "send" && (modeUnrestored || heldForTerminal))
+      ? false
+      : mode === "stop"
+        ? true
+        : hasText;
 
   // One fixed placeholder, always. The composer used to swap in a queue hint
   // while a turn ran and a no-grant explanation when AI access was missing;
@@ -1930,8 +1903,8 @@ export function MessageInput({
   const effectivePlaceholder = placeholder;
 
   return (
-    <div className="px-4 pb-4 pt-2 bg-transparent">
-      <div className="max-w-[720px] mx-auto">
+    <div className="pb-4 pt-2 bg-transparent">
+      <div className={CONTENT_COLUMN}>
         {/* Queued messages above the input */}
         {queue.length > 0 && (
           <div className="mb-2 flex flex-col gap-1">
@@ -1945,9 +1918,15 @@ export function MessageInput({
                   text={q}
                   onEdit={() => {
                     const cur = inputRef.current?.getValue() ?? "";
-                    const merged = cur.trim() ? `${cur}\n${q}` : q;
-                    inputRef.current?.setValue(merged);
-                    setValue(merged);
+                    // A paste or a cite the queue inlined comes back as its
+                    // chip, not as every line it holds. Cites were written
+                    // last, so they come off first.
+                    const uncited = collapseCites(q);
+                    const { text, pastes } = collapsePastes(uncited.text);
+                    for (const p of pastes) rememberMention(p, projectPath);
+                    for (const c of uncited.cites) rememberMention(c, projectPath);
+                    const merged = cur.trim() ? `${cur}\n${text}` : text;
+                    writeComposer(merged);
                     removeQueueItem(tabId, i);
                     requestAnimationFrame(() => inputRef.current?.focus());
                   }}
@@ -1958,6 +1937,8 @@ export function MessageInput({
           </div>
         )}
 
+        {/* The turn the computer slept through, while it is still going. */}
+        <SleepPill tabId={tabId} />
         {/* Transient-failure retry countdown (native agent). */}
         <RetryPill tabId={tabId} />
 
@@ -1965,22 +1946,31 @@ export function MessageInput({
             composer — the explanation for the input being locked below.
             Scoped to the native agent for the same reason the lock is: the
             other agents do not use the Atlas gateway, so an org with no grant
-            is not their problem and a bar over a working composer is noise. */}
-        {agentType === "atlas-agent" && <AiGrantBar />}
+            is not their problem and a bar over a working composer is noise.
+            Deferred while a turn runs, with the lock (`grantLocksComposer`). */}
+        {agentType === "atlas-agent" && <AiGrantBar turnRunning={running} />}
 
         {/* The tab's agent was uninstalled — same strip, same reason: the
             input below cannot send until the chat is switched. */}
-        <RemovedAgentBar tabId={tabId} />
+        {!grantBarShown && <RemovedAgentBar tabId={tabId} />}
 
         {/* A resume could not restore the user's mode: nothing sends until
             they pick one. */}
-        <ModeRestoreBar tabId={tabId} />
+        {!grantBarShown && <ModeRestoreBar tabId={tabId} />}
+
+        {/* The last turn moved the checkout to another branch: the next
+            message would run there. */}
+        {!grantBarShown && <BranchChangedBar tabId={tabId} />}
+
+        {/* Another process is writing this session: sending would fork it. */}
+        {!grantBarShown && <LiveElsewhereBar tabId={tabId} />}
 
         {/* Live plan docked on top of the input bar (JetBrains-Air style). */}
 
         <div
           ref={composerRef}
           data-chat-composer
+          data-collapsed={collapsed || undefined}
           className={cn(
             // Positioned + z-indexed so the composer paints over — and visually
             // tucks — the PlanDock's bottom edge (the attached-panel recipe).
@@ -1995,14 +1985,12 @@ export function MessageInput({
             // also swallowed clicks on the menu's first row (the pill sets
             // `pointer-events-auto`). Raising the context is the fix; raising
             // the menus themselves cannot work from inside it.
-            // Two-layer shell: this OUTER muted layer carries the toolbar as
-            // its exposed bottom strip; the INNER surface below holds the
-            // input + send button (the focus ring lives there — the "active
-            // field" is the input surface, not the toolbar).
-            "relative z-30 rounded-2xl border border-[var(--border)] bg-[var(--card)]",
+            // The shell draws nothing: the input card is a surface of its own
+            // and the toolbar a tray tucked under it (a muted outer card
+            // around both is gone).
+            "relative z-30",
             // The footer pills' labels collapse against THIS width.
             "@container",
-            "shadow-md",
             // NOTE: the disabled dim is NOT applied here. It used to be
             // (`disabled && "opacity-60"` on this shell), and it faded the
             // whole composer — footer pills, the agent switcher, and every
@@ -2013,7 +2001,38 @@ export function MessageInput({
             // Lock the composer while a GitHub repo syncs into `.atlas/repos`.
             githubSyncing !== null && "opacity-60 pointer-events-none",
           )}
-          onFocusCapture={handleFocusCapture}
+          onFocusCapture={() => {
+            setComposerFocused(true);
+            handleFocusCapture();
+          }}
+          onBlurCapture={onComposerBlur}
+          // A press anywhere in it is being in it, focus or not (see above).
+          onPointerDownCapture={() => setComposerFocused(true)}
+          // A press on the composer's own surface — the tray's padding, the
+          // gaps between pills — keeps focus where it is. Left alone, it
+          // moved focus to <body>, which folded the composer under the click.
+          onMouseDown={(e) => {
+            const target = e.target as Element;
+            if (
+              !target.closest(
+                "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='menuitem'], [tabindex]",
+              )
+            ) {
+              e.preventDefault();
+            }
+          }}
+          // Esc folds it, as clicking away does. Caught on the way DOWN:
+          // ProseMirror marks Esc handled in the editor, so it never
+          // bubbles back out unprevented. An open picker or menu keeps the
+          // composer from folding (`collapsible`), and is left its own Esc.
+          onKeyDownCapture={(e) => {
+            if (e.key !== "Escape" || !collapsible) return;
+            // A tray dropup (agent, model, options) that is open takes Esc to
+            // close itself.
+            if (e.currentTarget.querySelector("[data-popup-open], [aria-expanded='true']")) return;
+            (document.activeElement as HTMLElement | null)?.blur();
+            setComposerFocused(false);
+          }}
         >
           {githubSyncing !== null && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[var(--background)]/40 backdrop-blur-[1px]">
@@ -2061,19 +2080,24 @@ export function MessageInput({
               dropZoneEl,
             )}
           {/* Inner input surface — nested card with its own border + focus
-              glow, sitting proud of the muted shell (reference: the Skiper
-              double-layer composer). The send button lives INSIDE it. */}
+              glow, sitting proud of the muted shell. The send button lives INSIDE it. */}
           <div
             className={cn(
               // `min-h-[44px]`: the send button is absolutely positioned 8px
               // from the top at 28px tall, so it needs 36px of field to sit
-              // inside. CodeMirror's own min-height normally provides it —
-              // but if its theme fails to inject (see globals.css's
-              // `.atlas-chat-cm-host` block) the field collapses and the
-              // button hangs out over the footer. The floor makes the
-              // geometry hold even with no editor mounted at all.
-              "relative m-1 min-h-[44px] rounded-xl border border-[var(--border)] bg-[var(--background)]",
-              "transition-[border-color,box-shadow] duration-150",
+              // inside. The editor's own min-height (`.atlas-chat-composer`
+              // in globals.css) normally provides it; the floor makes the
+              // geometry hold before the editor chunk has landed, or with no
+              // editor mounted at all.
+              // `z-10` so the tray slides up BEHIND it. A capsule while the
+              // composer is folded (`rounded-composer`: half the card's 46px),
+              // a card while it is open; the corner eases between the two.
+              // No bottom margin: the tray hangs straight off its edge.
+              // `shadow-sm`: the `md` rung cast onto the tray under it and read
+              // as the tray being disabled.
+              "relative z-10 mx-1 mt-1 min-h-[44px] border border-[var(--border)] bg-[var(--background)] shadow-sm",
+              collapsed ? "rounded-composer" : "rounded-xl",
+              "transition-[border-radius,border-color,box-shadow] duration-base ease-out-strong motion-reduce:transition-none",
               // Focus treatment at HALF strength: the full border-focus +
               // /20 accent ring read far too loud on the nested surface.
               "focus-within:border-[color-mix(in_srgb,var(--atlas-border-strong)_50%,var(--border))]",
@@ -2085,11 +2109,6 @@ export function MessageInput({
               disabled && "opacity-60",
             )}
           >
-            <ImageAttachmentStrip
-              images={stagedImages}
-              onRemove={removeStagedImage}
-              className="px-3 pt-3"
-            />
             {/* Only the text area is pointer-blocked while `disabled`:
               `pointer-events-none` stops click-to-focus/typing AND the focus
               event, so we never trigger the agent-bind listener against a CLI
@@ -2099,22 +2118,27 @@ export function MessageInput({
                 clears the 28px button + 8px inset at any UI scale. */}
             <div className={cn("pr-[40px]", disabled && "pointer-events-none")}>
               {LazyChatInput ? (
-                <LazyChatInput
-                  ref={inputRef}
-                  initialValue={valueRef.current}
-                  placeholder={effectivePlaceholder}
-                  onChange={setValue}
-                  onSubmit={submit}
-                  enterToSend={enterToSend}
-                  onMentionTrigger={setTrigger}
-                  onSlashTrigger={setSlashTrigger}
-                  onPasteImages={handlePasteImages}
-                  onPastePaths={attachPaths}
-                  keyInterceptor={keyInterceptor}
-                />
+                <SessionProjectsContext.Provider value={acpSessionId ?? null}>
+                  <LazyChatInput
+                    ref={inputRef}
+                    initialValue={valueRef.current}
+                    placeholder={effectivePlaceholder}
+                    projectPath={projectPath}
+                    onEmptyChange={onEmptyChange}
+                    onDocChange={handleDocChange}
+                    onSubmit={submit}
+                    enterToSend={enterToSend}
+                    onMentionTrigger={setTrigger}
+                    onSlashTrigger={setSlashTrigger}
+                    onPasteImages={handlePasteImages}
+                    onPastePaths={attachPaths}
+                    onPasteLargeText={handlePasteLargeText}
+                    keyInterceptor={keyInterceptor}
+                  />
+                </SessionProjectsContext.Provider>
               ) : (
                 // Same-height empty slot so the panel layout doesn't reflow when
-                // CodeMirror lands. Non-interactive — by the time the user can
+                // the editor lands. Non-interactive — by the time the user can
                 // visually find this region the chunk has typically resolved.
                 <div aria-hidden="true" style={{ minHeight: 44 }} className="px-4 pt-3 pb-1" />
               )}
@@ -2137,15 +2161,22 @@ export function MessageInput({
               <button
                 onClick={submit}
                 disabled={!buttonEnabled}
+                aria-label={
+                  mode === "stop"
+                    ? "Stop generation"
+                    : mode === "queue"
+                      ? "Queue message"
+                      : "Send message"
+                }
                 className={cn(
                   // Reference-style squircle send: a soft rounded-square,
                   // transparent at rest, muted fill + border on hover, pinned
                   // top-right of the input surface (it does not ride down as
-                  // the field grows — same as the Skiper component).
+                  // the field grows).
                   // Geometry IN PX, not rem: Atlas's UI-scale setting shrinks
                   // the root font-size, so rem utilities (w-7/top-2 → 23px/6.5px
-                  // under scale) drift against CodeMirror's hardcoded 12px/16px
-                  // padding — the ruler-measured misalignment. CM's first text
+                  // under scale) drift against the editor's hardcoded 12px/16px
+                  // padding — the ruler-measured misalignment. The first text
                   // line centers at 12px pad + ~10px half-line = 22px; a 28px
                   // button at 8px top centers at 22px at EVERY UI scale.
                   "absolute top-[8px] right-[8px] flex items-center justify-center w-[28px] h-[28px] rounded-lg border transition-colors",
@@ -2171,55 +2202,78 @@ export function MessageInput({
               </button>
             </Hint>
           </div>
-          {/* Footer strip — the exposed band of the outer shell. Pill labels
-              collapse to icons as the shell narrows (`composerPillLabelClass`),
-              so the row never wraps or runs past the edge. No overflow clip:
-              the pills' dropups are children and would be cut off. */}
-          <div className="flex items-center justify-between gap-2 px-2 pb-1.5 pt-1">
-            <div className="flex min-w-0 items-center gap-1">
-              <ComposerAddMenu
-                // `disabledProp`, NOT `disabled`: a missing org AI grant locks
-                // the input, not the toolbar. Greying the + here made the whole
-                // footer read as dead while the fix (switch agent, request a
-                // grant) is one row away.
-                disabled={disabledProp || githubSyncing !== null}
-                projectPath={useAppStore.getState().currentProject?.path ?? null}
-                agentId={switchableAgent}
-                imageSupported={imageSupported}
-                onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
-                onAttachMedia={() => void pickMedia()}
-                onTakeScreenshot={(mode) => void handleTakeScreenshot(mode)}
-                onCloneRepo={(repo) => void handleCloneRepo(repo)}
-                onPickSession={handlePickSession}
-                onPickProject={handlePickProject}
-              />
-              {/* Agent / mode / model as one grouped, animated picker — the
+          {/* The toolbar tray, tucked under the input card. Folding, it
+              slides up behind the card while its row closes, so the two read
+              as one bar retracting into the input; opening runs it back
+              down. The row's height animates as a grid track (0fr ↔ 1fr).
+              It clips only while folded — open, the pills' dropups are its
+              children and must not be cut off. Pill labels collapse to icons
+              as the shell narrows (`composerPillLabelClass`), so the row
+              never wraps or runs past the edge. */}
+          <div
+            className={cn(
+              "grid transition-[grid-template-rows] duration-base ease-out-strong motion-reduce:transition-none",
+              // Folded, the capsule keeps the room under it the tray has open:
+              // the stack's own bottom padding, nothing added.
+              collapsed ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
+            )}
+          >
+            <div className={cn("min-h-0", collapsed && "overflow-hidden")}>
+              <div
+                inert={collapsed}
+                className={cn(
+                  // Fill: the panel-input background (near-black on the default
+                  // dark theme), a shade off the input card above, not a full step.
+                  "mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-[var(--atlas-panel-input-background)] px-2 pb-1.5 pt-2",
+                  "transition-[translate,opacity] duration-base ease-out-strong motion-reduce:transition-none",
+                  collapsed && "-translate-y-full opacity-0",
+                )}
+              >
+                <div className="flex min-w-0 items-center gap-1">
+                  <ComposerAddMenu
+                    // `disabledProp`, NOT `disabled`: a missing org AI grant locks
+                    // the input, not the toolbar. Greying the + here made the whole
+                    // footer read as dead while the fix (switch agent, request a
+                    // grant) is one row away.
+                    disabled={disabledProp || githubSyncing !== null}
+                    projectPath={useAppStore.getState().currentProject?.path ?? null}
+                    agentId={switchableAgent}
+                    imageSupported={imageSupported}
+                    onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
+                    onAttachMedia={() => void pickMedia()}
+                    onTakeScreenshot={(mode) => void handleTakeScreenshot(mode)}
+                    onCloneRepo={(repo) => void handleCloneRepo(repo)}
+                    onPickSession={handlePickSession}
+                    onPickProject={handlePickProject}
+                  />
+                  {/* Agent / mode / model as one grouped, animated picker — the
                   pills double as its tab strip. Cycling shortcuts (⌥/ agents,
                   ⇧⇥ Claude modes) are unchanged. The native agent's BYOK
                   pickers (ProviderModelPills etc.) stay separate below. */}
-              <ComposerGroupsMenu
-                tabId={tabId}
-                currentAgent={switchableAgent}
-                onSwitchAgent={handleSwitchAgent}
-              />
-              {/* The BYOK ProviderModelPills used to render here for the
+                  <ComposerGroupsMenu
+                    tabId={tabId}
+                    currentAgent={switchableAgent}
+                    onSwitchAgent={handleSwitchAgent}
+                  />
+                  {/* The BYOK ProviderModelPills used to render here for the
                   native agent — the user's own provider keys, which the
                   gateway agent cannot use. Model choice now goes through the
                   same ACP model pill as every other agent, fed by the seam's
                   published catalogue. */}
-              {agentType === "atlas-agent" && <EffortPill tabId={tabId} />}
-              {agentType === "atlas-agent" && <NativeMemoryPill />}
-            </div>
-            {/* Right side, in this order: the session's usage, the agent's own
+                  {agentType === "atlas-agent" && <EffortPill tabId={tabId} />}
+                </div>
+                {/* Right side, in this order: the session's usage, the agent's own
                 knobs, then the live
                 implementation-plan pill hard against the right edge (arc
                 progress + count; opens its own morphing task-list panel, and
                 replaces the PlanDock strip that used to sit above the
                 composer). Both are right-anchored dropups. */}
-            <div className="flex shrink-0 items-center gap-1">
-              <UsagePill tabId={tabId} />
-              <ComposerOptionsPill tabId={tabId} />
-              <PlanTasksPill tabId={tabId} />
+                <div className="flex shrink-0 items-center gap-1">
+                  <UsagePill tabId={tabId} />
+                  <ComposerOptionsPill tabId={tabId} />
+                  <PlanTasksPill tabId={tabId} />
+                </div>
+              </div>
             </div>
           </div>
         </div>

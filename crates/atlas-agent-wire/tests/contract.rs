@@ -30,7 +30,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use atlas_agent_wire::{
     AgentId, Message, MessageMode, MessageRole, PlanEntry, RateLimitWindow, SessionDelta,
-    SessionDeltaEnvelope, SessionStatus, ToolCall, ToolCallStatus, ToolContentBlock, Usage,
+    SessionDeltaEnvelope, SessionStatus, Subagent, SubagentStatus, ToolCall, ToolCallStatus,
+    ToolContentBlock, Usage,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -53,6 +54,7 @@ fn expected() -> BTreeMap<String, BTreeSet<String>> {
             "tool_call_output_chunk",
             &["message_id", "tool_call_id", "delta"],
         ),
+        ("subagent_upserted", &["subagent"]),
         ("plan_updated", &["plan"]),
         ("history_rewound", &["turns"]),
         ("mode_changed", &["mode_id"]),
@@ -78,8 +80,18 @@ fn expected() -> BTreeMap<String, BTreeSet<String>> {
             &["request_id", "tool_call", "options"],
         ),
         ("permission_resolved", &["request_id"]),
-        ("turn_finished", &["stop_reason", "turn_seq"]),
+        (
+            "turn_finished",
+            &[
+                "stop_reason",
+                "turn_seq",
+                "started_at_ms",
+                "ended_at_ms",
+                "worked_ms",
+            ],
+        ),
         ("turn_failed", &["error", "turn_seq", "error_kind"]),
+        ("slept_mid_turn", &["turn_seq", "slept_secs"]),
         ("agent_disconnected", &["reason"]),
     ]
     .into_iter()
@@ -105,6 +117,7 @@ fn contract_kind(delta: &SessionDelta) -> &'static str {
         SessionDelta::TextChunk { .. } => "text_chunk",
         SessionDelta::ThinkingChunk { .. } => "thinking_chunk",
         SessionDelta::ToolCallUpserted { .. } => "tool_call_upserted",
+        SessionDelta::SubagentUpserted { .. } => "subagent_upserted",
         SessionDelta::ToolCallOutputChunk { .. } => "tool_call_output_chunk",
         SessionDelta::PlanUpdated { .. } => "plan_updated",
         SessionDelta::HistoryRewound { .. } => "history_rewound",
@@ -124,6 +137,7 @@ fn contract_kind(delta: &SessionDelta) -> &'static str {
         SessionDelta::PermissionResolved { .. } => "permission_resolved",
         SessionDelta::TurnFinished { .. } => "turn_finished",
         SessionDelta::TurnFailed { .. } => "turn_failed",
+        SessionDelta::SleptMidTurn { .. } => "slept_mid_turn",
         SessionDelta::AgentDisconnected { .. } => "agent_disconnected",
     }
 }
@@ -209,6 +223,9 @@ fn samples() -> Vec<SessionDelta> {
             tool_call_id: "call-1".into(),
             delta: "line\n".into(),
         },
+        SessionDelta::SubagentUpserted {
+            subagent: sample_subagent(),
+        },
         SessionDelta::PlanUpdated {
             plan: vec![PlanEntry {
                 content: "do the thing".into(),
@@ -282,11 +299,18 @@ fn samples() -> Vec<SessionDelta> {
         SessionDelta::TurnFinished {
             stop_reason: "end_turn".into(),
             turn_seq: 3,
+            started_at_ms: Some(1_700_000_000_000),
+            ended_at_ms: Some(1_700_000_252_000),
+            worked_ms: Some(251_400),
         },
         SessionDelta::TurnFailed {
             error: "boom".into(),
             turn_seq: 3,
             error_kind: Some("transient".into()),
+        },
+        SessionDelta::SleptMidTurn {
+            turn_seq: 3,
+            slept_secs: 600,
         },
         SessionDelta::AgentDisconnected {
             reason: "process died".into(),
@@ -307,6 +331,11 @@ fn sample_message() -> Message {
         images: Vec::new(),
         // Fixed, not `now()`: the golden pins the serialized timestamp.
         timestamp: "2026-01-02T03:04:05Z".parse().unwrap(),
+        // Set, so the golden pins the key; `optional_fields_are_omitted…`
+        // pins its absence when false.
+        timestamp_approximate: true,
+        worked_ms: Some(252_000),
+        stop_reason: Some("cancelled".into()),
     }
 }
 
@@ -326,6 +355,25 @@ fn sample_tool_call() -> ToolCall {
             old_text: Some("old".into()),
             new_text: "new".into(),
         }],
+        parent_tool_call_id: Some("call-parent".into()),
+        started_at_ms: Some(1_700_000_000_000),
+        ended_at_ms: Some(1_700_000_001_500),
+    }
+}
+
+fn sample_subagent() -> Subagent {
+    Subagent {
+        tool_call_id: "call-parent".into(),
+        message_id: "msg-1".into(),
+        name: "Review the auth module".into(),
+        status: SubagentStatus::Running,
+        prompt: Some("Read src/auth.".into()),
+        role: Some("code-reviewer".into()),
+        result: None,
+        tool_call_count: 2,
+        started_at_ms: 1_700_000_000_000,
+        ended_at_ms: None,
+        own_thread: true,
     }
 }
 
@@ -348,6 +396,9 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         "content_blocks": [
             { "type": "diff", "path": "src/main.rs", "oldText": "old", "newText": "new" }
         ],
+        "parent_tool_call_id": "call-parent",
+        "started_at_ms": 1_700_000_000_000_i64,
+        "ended_at_ms": 1_700_000_001_500_i64,
     });
     BTreeMap::from([
         (
@@ -368,6 +419,9 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
                     "plan": [],
                     "model": "anthropic/claude",
                     "timestamp": "2026-01-02T03:04:05Z",
+                    "timestamp_approximate": true,
+                    "worked_ms": 252_000,
+                    "stop_reason": "cancelled",
                 },
             }),
         ),
@@ -390,6 +444,23 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
                 "message_id": "msg-1",
                 "tool_call_id": "call-1",
                 "delta": "line\n",
+            }),
+        ),
+        (
+            "subagent_upserted",
+            json!({
+                "kind": "subagent_upserted",
+                "subagent": {
+                    "toolCallId": "call-parent",
+                    "messageId": "msg-1",
+                    "name": "Review the auth module",
+                    "status": "running",
+                    "prompt": "Read src/auth.",
+                    "role": "code-reviewer",
+                    "toolCallCount": 2,
+                    "startedAtMs": 1_700_000_000_000i64,
+                    "ownThread": true,
+                },
             }),
         ),
         (
@@ -495,7 +566,14 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         ),
         (
             "turn_finished",
-            json!({ "kind": "turn_finished", "stop_reason": "end_turn", "turn_seq": 3 }),
+            json!({
+                "kind": "turn_finished",
+                "stop_reason": "end_turn",
+                "turn_seq": 3,
+                "started_at_ms": 1_700_000_000_000_i64,
+                "ended_at_ms": 1_700_000_252_000_i64,
+                "worked_ms": 251_400,
+            }),
         ),
         (
             "turn_failed",
@@ -505,6 +583,10 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
                 "turn_seq": 3,
                 "error_kind": "transient",
             }),
+        ),
+        (
+            "slept_mid_turn",
+            json!({ "kind": "slept_mid_turn", "turn_seq": 3, "slept_secs": 600 }),
         ),
         (
             "agent_disconnected",
@@ -648,12 +730,38 @@ fn optional_fields_are_omitted_rather_than_null() {
     .unwrap();
     assert!(value.get("error_kind").is_none());
 
+    let value = serde_json::to_value(SessionDelta::TurnFinished {
+        stop_reason: "end_turn".into(),
+        turn_seq: 0,
+        started_at_ms: None,
+        ended_at_ms: None,
+        worked_ms: None,
+    })
+    .unwrap();
+    assert!(value.get("started_at_ms").is_none());
+    assert!(value.get("ended_at_ms").is_none());
+    assert!(value.get("worked_ms").is_none());
+
+    let mut message = sample_message();
+    message.worked_ms = None;
+    message.stop_reason = None;
+    message.timestamp_approximate = false;
+    let value = serde_json::to_value(&message).unwrap();
+    assert!(value.get("worked_ms").is_none());
+    assert!(value.get("stop_reason").is_none());
+    // A timed message (every live one) serializes exactly as before the flag.
+    assert!(value.get("timestamp_approximate").is_none());
+
     let mut tool_call = sample_tool_call();
     tool_call.raw_output = None;
     tool_call.content_blocks = Vec::new();
+    tool_call.started_at_ms = None;
+    tool_call.ended_at_ms = None;
     let value = serde_json::to_value(&tool_call).unwrap();
     assert!(value.get("raw_output").is_none());
     assert!(value.get("content_blocks").is_none());
+    assert!(value.get("started_at_ms").is_none());
+    assert!(value.get("ended_at_ms").is_none());
 }
 
 #[test]

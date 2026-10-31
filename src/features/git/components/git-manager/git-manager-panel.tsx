@@ -9,6 +9,7 @@ import { gitErrorText, notifyGitRemoteOp } from "@/features/notifications/lib/ou
 import { BranchSwitcher } from "./branch-switcher";
 import { MergeBranchDialog } from "./merge-branch-dialog";
 import { GitErrorDialog } from "./git-error-dialog";
+import { PullChoiceDialog } from "./pull-choice-dialog";
 import { ChangesView } from "./changes-view";
 import { HistoryView } from "./history-view";
 import { StashesView } from "./stashes-view";
@@ -18,7 +19,7 @@ type View = "changes" | "history" | "stashes";
 /**
  * Unified Source-Control manager — GitHub-Desktop-style toolbar (branch
  * switcher + fetch/pull/push with ahead/behind) over Changes / History /
- * Stashes views. Lives in the right panel and is the single place to run
+ * Stashes views. Lives in the source-control surface and is the single place to run
  * the project repo's git workflow.
  */
 export function GitManagerPanel() {
@@ -39,13 +40,6 @@ export function GitManagerPanel() {
     if (repoPath) void actions.refreshAll(repoPath).catch(() => {});
   }, [repoPath, actions]);
 
-  // When a commit is selected elsewhere (e.g. clicking a node in the Git Graph),
-  // jump this panel to History so its commit-detail view shows.
-  const selectedCommit = useGitStore.use.selectedCommit();
-  useEffect(() => {
-    if (selectedCommit) setView("history");
-  }, [selectedCommit]);
-
   // The toolbar buttons are the user-started remote operations — the only
   // callers that notify (auto-fetch and the merge dialog's fetch never do).
   const run = async (label: "fetch" | "pull" | "push" | "publish", fn: () => Promise<void>) => {
@@ -61,6 +55,19 @@ export function GitManagerPanel() {
     } finally {
       setBusy(null);
     }
+  };
+
+  // Diverged: a plain pull reconciles only if git config names a strategy.
+  // Honour a saved one; ask up front only where git itself would refuse.
+  const onPull = async () => {
+    if (ahead > 0 && behind > 0) {
+      const preference = await actions.pullPreference().catch(() => "ask" as const);
+      if (preference === "ask") {
+        actions.showPullChoice({ kind: "diverged" });
+        return;
+      }
+    }
+    await run("pull", () => actions.pull());
   };
 
   if (!isRepo) {
@@ -106,9 +113,9 @@ export function GitManagerPanel() {
             {hasUpstream ? (
               <>
                 <ToolbarBtn
-                  onClick={() => run("pull", () => actions.pull(false))}
+                  onClick={() => void onPull()}
                   busy={busy === "pull"}
-                  title="Pull"
+                  title={ahead > 0 && behind > 0 ? "Pull (branch has diverged)" : "Pull"}
                   icon={<ArrowDown size={12} />}
                   badge={behind > 0 ? behind : undefined}
                 />
@@ -153,7 +160,8 @@ export function GitManagerPanel() {
       </div>
 
       <MergeBranchDialog open={mergeOpen} onOpenChange={setMergeOpen} />
-      <GitErrorDialog />
+      <GitErrorDialog onForcePush={() => run("push", () => actions.push(true))} />
+      <PullChoiceDialog onChoose={(strategy) => run("pull", () => actions.pull(strategy))} />
     </div>
   );
 }

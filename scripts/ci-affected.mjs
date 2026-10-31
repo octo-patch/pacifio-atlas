@@ -25,7 +25,7 @@
  *      when one is not declared here.
  *   3. A file inside a cargo package marks that package.
  *   4. A file under `vendor/` outside every package (LICENSE, NOTICE, shared
- *      fixtures) marks every vendored package.
+ *      fixtures) marks every engine package.
  *   5. NON_RUST paths mark nothing.
  *   6. Anything else is unknown, and an unknown file means everything runs.
  *      The planner fails closed: a new top-level file costs one full run until
@@ -99,6 +99,12 @@ export const EXTRA_INPUTS = [
     why: "include_str! in the tests module of src-tauri/src/state/atlas_config.rs",
   },
   {
+    path: "docs/reference/config.default.toml",
+    packages: ["atlas"],
+    testOnly: true,
+    why: "config_default_file_matches_the_committed_copy in src-tauri/src/state/atlas_config.rs",
+  },
+  {
     path: "crates/atlas-kb-server/",
     packages: ["atlas"],
     why: "commands/knowledge_export.rs locates and compiles it at runtime",
@@ -131,8 +137,10 @@ export const NON_RUST = [
   "docs/",
   "landing/",
   "public/",
+  "patches/",
   "scripts/",
   ".husky/",
+  ".vscode/",
   ".design-sync/",
   ".github/ISSUE_TEMPLATE/",
   ".github/pr-assets/",
@@ -143,6 +151,8 @@ export const NON_RUST = [
   ".github/workflows/release-linux.yml",
   "*.md",
   "LICENSE",
+  // The fundingjson.org manifest: project metadata, read by nothing in CI.
+  "funding.json",
   "package.json",
   "bun.lock",
   "bunfig.toml",
@@ -156,6 +166,7 @@ export const NON_RUST = [
   ".oxlintrc.json",
   ".oxfmtrc.json",
   ".gitignore",
+  ".editorconfig",
   ".env.example",
 ];
 

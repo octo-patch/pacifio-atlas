@@ -2,7 +2,14 @@
 // state — no I/O, no store access — so the awkward parts (reaction counts,
 // speaker grouping, DM titles) stay testable without a socket.
 
-import type { ChatConversation, ChatReaction, CommsMessage, OrgMemberProfile } from "../types";
+import type {
+  ChatConversation,
+  ChatReaction,
+  ChatReadState,
+  CommsMessage,
+  OrgMemberProfile,
+} from "../types";
+import { formatTime, timeFormat } from "@/lib/format-time";
 
 /** The server sends reaction ROWS and no aggregate; this is where counts come
  *  from. Ordered by first appearance so the chips don't reshuffle on a change. */
@@ -59,6 +66,9 @@ export function groupMessages(messages: CommsMessage[], me: string): MessageGrou
       last &&
       previous &&
       last.authorId === m.author_id &&
+      // One webhook can post under many names ("CI", "Deploy"); the group head
+      // shows one, so a different name starts a new stack.
+      (previous.author_name ?? null) === (m.author_name ?? null) &&
       // A reply starts a new stack — the quoted parent needs its own head.
       !m.reply_to_id &&
       // A day boundary always starts a new stack. The day divider is drawn
@@ -101,19 +111,18 @@ export function formatDayDivider(at: number): string {
 
 /** Intl is measurably the cost of a transcript render (~2 calls per row), and
  *  a timestamp's formatting never changes — cache it. Bounded FIFO. */
-const clockCache = new Map<number, string>();
+const clockCache = new Map<string, string>();
 export function formatClock(at: number): string {
-  const hit = clockCache.get(at);
+  // Keyed by the clock too, so switching `timeFormat` misses the cache.
+  const key = `${timeFormat()}|${at}`;
+  const hit = clockCache.get(key);
   if (hit) return hit;
-  const formatted = new Date(at).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const formatted = formatTime(at);
   if (clockCache.size >= 1024) {
     const oldest = clockCache.keys().next().value;
     if (oldest !== undefined) clockCache.delete(oldest);
   }
-  clockCache.set(at, formatted);
+  clockCache.set(key, formatted);
   return formatted;
 }
 
@@ -142,8 +151,35 @@ export function dmCounterpart(
   return other ? (members.get(other) ?? null) : null;
 }
 
+/**
+ * What to call a member. The server can hold an account with no display name —
+ * an invite accepted from an email link and never completed — so the email
+ * stands in, as the web's members list labels such a row. Applied once, where
+ * the roster becomes `OrgMemberProfile`s, so every `member.name` reader (DM and
+ * contact rows, bylines, mentions, typing hints) gets a real label.
+ */
+export function memberName(
+  name: string | null | undefined,
+  email: string | null | undefined,
+): string {
+  return name?.trim() || email?.trim() || "Unknown";
+}
+
+/**
+ * Avatar initials. A label that is an email (see `memberName`) is read by its
+ * local part with any punctuation as a word break — `j.okonkwo@acme.dev` is
+ * "JO", as the web's `initialsOf` draws it, and `o'brien@acme.dev` is "OB" —
+ * not "J." or "O'" off the raw address. A local part with no letters or
+ * digits in it (`_@acme.dev`) falls back to the domain rather than to "?".
+ */
 export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
+  let source = name.trim();
+  if (!/\s/.test(source) && source.includes("@")) {
+    const at = source.indexOf("@");
+    const words = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    source = words(source.slice(0, at)) || words(source.slice(at + 1));
+  }
+  const parts = source.split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
@@ -165,4 +201,21 @@ export function utf8Bytes(s: string): number {
 /** Sort for the sidebar: most recent activity first. */
 export function byRecency(a: ChatConversation, b: ChatConversation): number {
   return b.last_activity_seq - a.last_activity_seq;
+}
+
+/** Whether any conversation the user is in has something unread — a message
+ *  or a mention, both counted by the server (`ChatReadState`), never here.
+ *  Only listed conversations count: a read row outlives a conversation the
+ *  user left. */
+export function hasUnreadConversation(
+  reads: readonly ChatReadState[],
+  conversations: readonly ChatConversation[],
+): boolean {
+  let listed: Set<string> | null = null;
+  for (const read of reads) {
+    if (Number(read.unread) <= 0 && Number(read.mentions) <= 0) continue;
+    listed ??= new Set(conversations.map((c) => c.id));
+    if (listed.has(read.conv_id)) return true;
+  }
+  return false;
 }

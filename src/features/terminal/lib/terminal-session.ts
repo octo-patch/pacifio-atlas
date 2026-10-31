@@ -42,6 +42,11 @@ import { createTerminalEventSink } from "./terminal-notifier";
 import { createTerminalKeymap } from "./terminal-keymap";
 import { createPathLinkProvider } from "./path-link-provider";
 import { resolveTerminalFont } from "../utils/resolve-font";
+import {
+  appliedTerminalFont,
+  appliedTerminalFontSize,
+  DISPLAY_SETTINGS_APPLIED,
+} from "@/features/settings/lib/display-settings";
 import { perfBegin, perfBlockDone, perfBytes } from "./term-perf";
 import { collectPanes, useTerminalStore } from "../stores/terminal-store";
 
@@ -100,8 +105,19 @@ const SUDO_SHELL_RE = /^sudo\s+(?:-s|-i|su(?:\s+-l?|\s+-)?)\s*$/;
  *  shells keep LF, which the line discipline already reads as end-of-line. */
 const ENTER = isWindows ? "\r" : "\n";
 
-const FONT_SIZE = 13;
+/** `terminalFontSize`, as `display-settings.ts` last applied it. */
+const fontSize = () => appliedTerminalFontSize();
 const LINE_HEIGHT = 1.4;
+
+/** Which terminal state a forwarded mode sequence sets, so a later one for the
+ *  same state replaces it: `CSI ?25l` and `CSI ?25h` share a key. */
+function modeKey(seq: string): string {
+  const last = seq[seq.length - 1];
+  if (seq[1] === "[") return last === "h" || last === "l" ? seq.slice(0, -1) : `csi${last}`;
+  if (seq[1] === "(" || seq[1] === ")") return seq.slice(0, 2);
+  if (last === "7" || last === "8") return "decsc";
+  return "keypad";
+}
 
 // ── Module state (survives HMR via globalThis) ─────────────────────────────
 
@@ -160,6 +176,16 @@ function startGlobalListeners(): void {
   onThemeApplied(() => {
     for (const session of reg.sessions.values()) session.retheme();
   });
+  // The same for `terminalFontSize` and the terminal font: the cached cell is
+  // measured again, and each live xterm takes the new font and refits.
+  let applied = `${fontSize()}|${appliedTerminalFont()}`;
+  window.addEventListener(DISPLAY_SETTINGS_APPLIED, () => {
+    const next = `${fontSize()}|${appliedTerminalFont()}`;
+    if (next === applied) return;
+    applied = next;
+    reg.cell = null;
+    for (const session of reg.sessions.values()) void session.refont();
+  });
   void invoke<string | null>("terminal_zsh_dir")
     .then((d) => {
       reg.zshDir = d;
@@ -176,15 +202,16 @@ function startGlobalListeners(): void {
  */
 async function cellSize(): Promise<{ w: number; h: number }> {
   if (reg.cell) return reg.cell;
-  const fontFamily = await resolveTerminalFont(FONT_SIZE);
+  const size = fontSize();
+  const fontFamily = await resolveTerminalFont(size, appliedTerminalFont());
   const span = document.createElement("span");
   span.textContent = "W".repeat(20);
-  span.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${FONT_SIZE}px ${fontFamily};line-height:${LINE_HEIGHT}`;
+  span.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${size}px ${fontFamily};line-height:${LINE_HEIGHT}`;
   document.body.appendChild(span);
   const rect = span.getBoundingClientRect();
   span.remove();
-  const w = rect.width > 0 ? rect.width / 20 : FONT_SIZE * 0.6;
-  const h = Math.ceil(FONT_SIZE * LINE_HEIGHT);
+  const w = rect.width > 0 ? rect.width / 20 : size * 0.6;
+  const h = Math.ceil(size * LINE_HEIGHT);
   reg.cell = { w, h };
   return reg.cell;
 }
@@ -194,6 +221,8 @@ async function cellSize(): Promise<{ w: number; h: number }> {
 export class TerminalSession {
   readonly key: string;
   readonly tabId: string;
+  /** When the shell was started — the side list's "open for". */
+  readonly createdAt = Date.now();
   /** The element xterm opens into. Views append it; it is never recreated. */
   readonly surfaceEl: HTMLDivElement;
 
@@ -224,6 +253,11 @@ export class TerminalSession {
   private xtermRing: string[] = [];
   private xtermRingBytes = 0;
   private xtermRingOverflow = false;
+  /** Normal-screen mode sequences held for an absent or hidden xterm, latest
+   *  per mode (see `modeKey`). Progress output toggles cursor visibility on
+   *  every frame; as a log those filled the ring, which was then thrown away
+   *  — losing the very modes an alt-screen app starts out relying on. */
+  private xtermModes = new Map<string, string>();
   private xtermLinger = 0;
 
   private lastSize: { cols: number; rows: number } | null = null;
@@ -249,7 +283,7 @@ export class TerminalSession {
         notify(e);
       },
     );
-    this.parser.setXtermSink((t) => this.feedXterm(t));
+    this.parser.setXtermSink((t, modeOnly) => this.feedXterm(t, modeOnly));
     this.snapshot = {
       blocks: this.parser.blocks,
       altScreen: false,
@@ -485,9 +519,17 @@ export class TerminalSession {
 
   // ── xterm (lazy) ─────────────────────────────────────────────────────────
 
-  private feedXterm(text: string): void {
+  private feedXterm(text: string, modeOnly: boolean): void {
     if (this.xterm && this.visible) {
       this.xterm.write(text);
+      return;
+    }
+    // A mode change with no screen content queued ahead of it: only its latest
+    // value matters. (With content queued it rides the ring, to keep order.)
+    if (modeOnly && this.xtermRing.length === 0 && !this.xtermRingOverflow) {
+      const key = modeKey(text);
+      this.xtermModes.delete(key);
+      this.xtermModes.set(key, text);
       return;
     }
     // Held for a surface that does not exist yet or is not on screen. Past
@@ -505,6 +547,8 @@ export class TerminalSession {
 
   private replayRing(): void {
     if (!this.xterm) return;
+    for (const seq of this.xtermModes.values()) this.xterm.write(seq);
+    this.xtermModes.clear();
     if (this.xtermRingOverflow) {
       this.xtermRingOverflow = false;
       this.nudgeRedraw();
@@ -536,6 +580,19 @@ export class TerminalSession {
     this.xterm.options.theme = terminalTheme();
   }
 
+  /** Take the current `terminalFontSize` and code font, then refit: the
+   *  PTY's columns follow the cell size, with or without an xterm. */
+  async refont(): Promise<void> {
+    if (this.xterm) {
+      const size = fontSize();
+      const fontFamily = await resolveTerminalFont(size, appliedTerminalFont());
+      if (!this.xterm || this.closed) return;
+      this.xterm.options.fontSize = size;
+      this.xterm.options.fontFamily = fontFamily;
+    }
+    this.requestFit();
+  }
+
   private async ensureXterm(): Promise<void> {
     if (this.xterm || this.xtermCreating || this.closed) return;
     this.xtermCreating = true;
@@ -545,11 +602,12 @@ export class TerminalSession {
         import("@xterm/addon-fit"),
         import("@xterm/xterm/css/xterm.css"),
       ]);
-      const fontFamily = await resolveTerminalFont(FONT_SIZE);
+      const size = fontSize();
+      const fontFamily = await resolveTerminalFont(size, appliedTerminalFont());
       if (this.closed || !this.host) return;
       const term = new Terminal({
         fontFamily,
-        fontSize: FONT_SIZE,
+        fontSize: size,
         lineHeight: LINE_HEIGHT,
         // The alt screen has no scrollback — the block list owns history.
         scrollback: 0,
@@ -657,6 +715,7 @@ export class TerminalSession {
     this.xtermRing = [];
     this.xtermRingBytes = 0;
     this.xtermRingOverflow = false;
+    this.xtermModes.clear();
     if (!this.closed) this.publish({ surfaceReady: false });
   }
 

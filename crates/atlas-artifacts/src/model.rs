@@ -313,6 +313,21 @@ pub struct Comment {
     pub resolved_at: Option<String>,
     #[serde(default)]
     pub resolved_by: Option<String>,
+    /// Who voted it up and who voted it down — member ids, oldest first.
+    /// Absent from servers older than votes, hence the default.
+    #[serde(default)]
+    pub votes: CommentVotes,
+}
+
+/// The people on each side of a comment's vote, not two counts: one frame
+/// serves every socket, and a reader can tell its own vote from the rest.
+/// Only members vote, so both lists are bounded by the Organisation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentVotes {
+    #[serde(default)]
+    pub up: Vec<String>,
+    #[serde(default)]
+    pub down: Vec<String>,
 }
 
 impl Comment {
@@ -430,9 +445,70 @@ pub struct InboxPage {
     pub next_cursor: Option<String>,
 }
 
+/// A public share link, as its owner sees it.
+///
+/// The password is never among the fields — only whether there is one. A share
+/// is created with its slug and then only revoked: the slug, the password, the
+/// scope and the expiry are what somebody was *given*, and editing any of them
+/// would turn the link in their hand into a link to somewhere else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactShare {
+    pub id: String,
+    /// `session` for one run, `workspace` for a whole Project's worth.
+    pub scope: String,
+    pub workspace_id: String,
+    /// The Session, for a `session` scope; `None` for a Project-wide link.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// The unguessable part of the public address. 128 bits of entropy.
+    pub slug: String,
+    #[serde(default)]
+    pub has_password: bool,
+    #[serde(default)]
+    pub comments_enabled: bool,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// Set once revoked. A revoked share is refused immediately rather than
+    /// waiting for any token already issued against it to expire.
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+    #[serde(default)]
+    pub created_by: String,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+impl ArtifactShare {
+    /// Whether this link still opens.
+    pub fn is_live(&self) -> bool {
+        self.revoked_at.is_none()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comment_votes_parse_and_default_to_none() {
+        let base = serde_json::json!({
+            "id": "c1", "sessionId": "s1", "anchorKind": "message", "anchorId": "m1",
+            "authorId": "u1", "body": "hi", "createdAt": "2026-10-19T00:00:00Z"
+        });
+        // A server older than votes sends no field: nobody has voted.
+        let old: Comment = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(old.votes, CommentVotes::default());
+
+        let mut voted = base;
+        voted["votes"] = serde_json::json!({ "up": ["u2", "u3"], "down": ["u4"] });
+        let c: Comment = serde_json::from_value(voted).unwrap();
+        assert_eq!(c.votes.up, vec!["u2", "u3"]);
+        assert_eq!(c.votes.down, vec!["u4"]);
+        // And it goes back out to the renderer under the same name.
+        let back = serde_json::to_value(&c).unwrap();
+        assert_eq!(back["votes"]["up"][1], "u3");
+    }
 
     #[test]
     fn every_commentable_entry_kind_maps_to_an_anchor() {

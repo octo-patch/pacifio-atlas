@@ -31,8 +31,10 @@ import type {
   TimelineEntry,
   ToolTally,
   BoardPage,
+  ProjectFilter,
 } from "@/features/artifacts/types";
 import type { Comment, CommentThreads } from "@/features/artifacts/lib/comments-api";
+import type { ArtifactShare } from "@/features/artifacts/lib/shares-api";
 import type { CommentTarget } from "@/features/chat/components/chat-comments-controller";
 import type {
   RetrieveResult,
@@ -45,6 +47,7 @@ import type { modelchat, ModelChatEvent } from "@/lib/byok/byok-chat";
 import type { Project } from "@/features/projects/stores/project-store";
 import type { TypedHandlers, Unit } from "../types";
 import { abs, ALL_PROJECTS, MOCK_PROJECT } from "../project";
+import { NO_VOTES, withVote, type VoteValue } from "@/features/artifacts/lib/votes";
 
 const [APP, PLATFORM, DOCS] = ALL_PROJECTS;
 
@@ -114,6 +117,10 @@ function cachedOnly(read: number): Spend {
     contextSize: null,
   };
 }
+
+/** Public share links made this session, by Session id. In memory only: a
+ *  slug is a credential, and the mock has no business persisting one. */
+const mockShares = new Map<string, ArtifactShare>();
 
 interface Seed {
   id: string;
@@ -1097,10 +1104,15 @@ export interface ArtifactsResponses {
   artifacts_cloud_session: SessionDetail;
   artifacts_cloud_payload: ArtifactPayload;
   artifacts_cloud_session_url: string | null;
+  artifacts_cloud_session_share: ArtifactShare | null;
+  artifacts_cloud_share_create: ArtifactShare;
+  artifacts_cloud_share_revoke: void;
+  artifacts_cloud_share_url: string;
   artifacts_cloud_comments: CommentThreads;
   artifacts_cloud_comment_create: Comment;
   artifacts_cloud_comment_update: Comment;
   artifacts_cloud_comment_delete: Comment;
+  artifacts_cloud_comment_vote: Comment;
   artifacts_checkpoints: BoardCheckpoint[];
   artifacts_payload: ArtifactPayload;
   session_chat_threads_list: ThreadMeta[];
@@ -1144,6 +1156,8 @@ function seedComments() {
         body: "Is <@usr_priya> expecting the retry helper to keep its old signature?",
         mentions: ["usr_priya"],
         authorId: "usr_sam",
+        // A score to read, and an up you can take back or switch.
+        votes: { up: ["usr_mira", "usr_priya"], down: [] },
       }),
       mockComment({
         id: "cm_2",
@@ -1279,6 +1293,7 @@ export function mockComment(over: Partial<Comment> & { id: string }): Comment {
     deletedAt: null,
     resolvedAt: null,
     resolvedBy: null,
+    votes: { up: [], down: [] },
     ...over,
   };
 }
@@ -1313,8 +1328,28 @@ function threadsFor(sessionId: string): CommentThreads {
 }
 
 export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
-  // Targeting is a Rust-side concern with nothing to answer.
-  artifacts_cloud_retarget: (): null => null,
+  // Targeting is a Rust-side concern with nothing to answer — except that the
+  // real board sockets each hear their Project's roster on connect, which is
+  // what lights the Timeline header's online stack. Sam is on one Project and
+  // Mira on the other: Mira is offline in team chat (`comms.ts`), so her face
+  // here proves the two sources are unioned rather than one replacing the
+  // other. `usr_dev` is the viewer and must never appear in the stack.
+  artifacts_cloud_retarget: ({ orgId }): null => {
+    if (orgId == null) return null;
+    setTimeout(() => {
+      void emit("atlas:artifacts-cloud", {
+        kind: "presence",
+        projectId: "rw_1d55e903",
+        online: ["usr_dev", "usr_sam", "usr_mira"],
+      });
+      void emit("atlas:artifacts-cloud", {
+        kind: "presence",
+        projectId: "rw_8c41f20b",
+        online: ["usr_dev", "usr_priya"],
+      });
+    }, 300);
+    return null;
+  },
   // The harness never fails, so a retry always "succeeds".
   artifacts_cloud_refresh: (): boolean => true,
   artifacts_cloud_follow: (): null => null,
@@ -1352,6 +1387,40 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
 
   artifacts_cloud_session_url: ({ projectId, sessionId }): string =>
     `https://app.tryatlas.cc/timeline?org=org_demo&workspace=${String(projectId)}&session=${String(sessionId)}`,
+
+  // Public shares, in memory for the life of the page: create one and the
+  // sheet shows the link; revoke it and the sheet goes back to offering the
+  // button. Enough to exercise every state the panel has.
+  artifacts_cloud_session_share: ({ sessionId }): ArtifactShare | null =>
+    mockShares.get(String(sessionId)) ?? null,
+
+  artifacts_cloud_share_create: ({ projectId, sessionId, comments }): ArtifactShare => {
+    const share: ArtifactShare = {
+      id: `shr_${String(sessionId).slice(0, 8)}`,
+      scope: "session",
+      workspaceId: String(projectId),
+      sessionId: String(sessionId),
+      slug: `mock${String(sessionId)
+        .replace(/[^a-z0-9]/gi, "")
+        .slice(0, 10)}`,
+      hasPassword: false,
+      commentsEnabled: Boolean(comments),
+      expiresAt: null,
+      revokedAt: null,
+      createdBy: "u_me",
+      createdAt: new Date().toISOString(),
+    };
+    mockShares.set(String(sessionId), share);
+    return share;
+  },
+
+  artifacts_cloud_share_revoke: ({ shareId }): void => {
+    for (const [key, share] of mockShares) {
+      if (share.id === String(shareId)) mockShares.delete(key);
+    }
+  },
+
+  artifacts_cloud_share_url: ({ slug }): string => `https://app.tryatlas.cc/s/${String(slug)}`,
 
   artifacts_cloud_payload: ({ part }): ArtifactPayload => ({
     text: `[mock] the full ${String(part)} of this entry, fetched from the server.`,
@@ -1397,6 +1466,15 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
       resolvedBy: resolved == null ? row.resolvedBy : resolved ? "usr_priya" : null,
     })),
 
+  // A value, not a toggle, cast as you (`usr_dev`) — the server's rule, via
+  // the same `withVote` the client draws with. A deleted comment takes none.
+  artifacts_cloud_comment_vote: ({ sessionId, commentId, value }): Comment =>
+    patchComment(String(sessionId), String(commentId), (row) =>
+      row.deletedAt && value !== 0
+        ? row
+        : { ...row, votes: withVote(row.votes ?? NO_VOTES, "usr_dev", value as VoteValue) },
+    ),
+
   // The row survives with a null body so replies keep their places — which is
   // exactly what the real server does, and what the tombstone renders from.
   artifacts_cloud_comment_delete: ({ sessionId, commentId }): Comment =>
@@ -1407,12 +1485,28 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
       deletedAt: new Date().toISOString(),
     })),
 
-  artifacts_board: ({ projects }): BoardPage => {
-    const paths = Array.isArray(projects) ? (projects as string[]) : [];
+  artifacts_board: ({ projects, filter }): BoardPage => {
+    const scope = (filter ?? null) as ProjectFilter | null;
+    const paths = !scope
+      ? Array.isArray(projects)
+        ? (projects as string[])
+        : []
+      : "local" in scope
+        ? [scope.local]
+        : [];
     const local = SEEDS.filter((seed) => paths.includes(seed.project.path)).map(boardRow);
     // The merge the real command does: local rows, plus whatever the
-    // Organisation has that this machine does not.
-    const sessions = [...local, ...teammateBoardRows()].sort((a, b) =>
+    // Organisation has that this machine does not — narrowed to the filtered
+    // Project when there is one.
+    const bound = new Set(local.map((row) => row.remoteProjectId).filter(Boolean));
+    const remote = teammateBoardRows().filter((row) =>
+      !scope
+        ? true
+        : "local" in scope
+          ? bound.has(row.remoteProjectId)
+          : row.remoteProjectId === scope.remote,
+    );
+    const sessions = [...local, ...remote].sort((a, b) =>
       b.lastActivityAt.localeCompare(a.lastActivityAt),
     );
     // The fixture answers in one tick, so the remote half is never outstanding

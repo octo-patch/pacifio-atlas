@@ -57,9 +57,9 @@ function freshTabId(): string {
 /**
  * Open the agent chat focused on a specific ACP session, reloading its
  * transcript from disk. Assumes the target project is already active (the
- * caller switches projects first). Mirrors `session-sidebar.handleOpenAgent`'s
- * load flow (focus-if-open, reuse-idle-tab-else-new) so it can be invoked from
- * anywhere (e.g. the project switcher's Chats section).
+ * caller switches projects first). Mirrors `openThread`'s load flow
+ * (`open-thread.ts`: focus-if-open, reuse-idle-tab-else-new) so it can be
+ * invoked from anywhere.
  */
 export async function openAgentSession({
   acpSessionId,
@@ -109,7 +109,7 @@ export async function openAgentSession({
     addTab({
       id: targetTabId,
       type: "chat",
-      title: title.slice(0, 40) || "Chat",
+      title: title.slice(0, 40) || "Session",
       closable: true,
       dirty: false,
       data: {},
@@ -161,7 +161,7 @@ export async function openAgentSession({
     });
     setAcpBinding(targetTabId, agent.agent_id, acpSessionId, cwd);
     // Restore live status + docked plan AFTER the bind (which clears the plan).
-    hydrateSessionSnapshot(targetTabId, snapshot.status, snapshot.plan);
+    hydrateSessionSnapshot(targetTabId, snapshot.status, snapshot.plan, snapshot.subagents);
     // This path seeded the mode pill from the stored preference but never told
     // the agent, so the pill could read Bypass while the engine enforced Ask.
     // Applied before `setResumePending(false)`, which is what releases a queued
@@ -206,7 +206,8 @@ export async function openAgentSession({
  * not come through here: it always opens a new tab once the chat has a
  * conversation (`openAgentChatInNewTab`), so it never resets one.
  */
-export function openNewAgentChat(agent?: SwitchableAgent): void {
+/** Returns the tab the fresh chat is in. */
+export function openNewAgentChat(agent?: SwitchableAgent): string {
   // This is a public entry point that WILL get wired as an event handler again
   // someday — a React SyntheticEvent arriving here once reached the store as
   // agentType and broke the whole bind pipeline. Anything non-string means
@@ -241,11 +242,11 @@ export function openNewAgentChat(agent?: SwitchableAgent): void {
     // the sidebar's only handle on it until a disk refetch. Re-list now so it
     // stays in history instead of vanishing.
     refreshSessionLists();
-    return;
+    return existing.id;
   }
 
   // No chat tab open, or the current chat is mid-turn → fresh tab.
-  openAgentChatInNewTab(agent);
+  return openAgentChatInNewTab(agent);
 }
 
 /**
@@ -256,10 +257,13 @@ export function openNewAgentChat(agent?: SwitchableAgent): void {
  * cleared out of its tab (a session is paired to one agent for its lifetime,
  * so the new agent needs a session of its own either way).
  */
-export function openAgentChatInNewTab(agent?: SwitchableAgent): void {
+export function openAgentChatInNewTab(
+  agent?: SwitchableAgent,
+  opts: { model?: string } = {},
+): string {
   if (typeof agent !== "string") agent = undefined;
   const { addTab, setActiveTab } = useLayoutStore.getState().actions;
-  const { createSession, switchChatAgent } = useChatStore.getState().actions;
+  const { createSession, switchChatAgent, setAcpModel } = useChatStore.getState().actions;
   const id = freshTabId();
   addTab({
     id,
@@ -271,6 +275,9 @@ export function openAgentChatInNewTab(agent?: SwitchableAgent): void {
   });
   createSession(id);
   if (agent) switchChatAgent(id, agent);
+  // Unbound, so this only records the pick; the bind applies it.
+  if (agent && opts.model) setAcpModel(id, opts.model);
   setActiveTab(id);
   window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId: id } }));
+  return id;
 }

@@ -1,4 +1,4 @@
-import type { ToolContentBlock } from "@/types/agent";
+import type { Subagent, ToolContentBlock } from "@/types/agent";
 
 // Wire shapes for the `atlas-agents` Rust surface. These mirror
 // `crates/atlas-agents/src/{session,events,plugin,manager}.rs` — keep in sync
@@ -41,6 +41,14 @@ export interface ToolCall {
   locations: unknown[];
   /** Structural content blocks (P1.4). Omitted by Rust when empty. */
   content_blocks?: ToolContentBlock[];
+  /** The subagent launch this call belongs to, when the agent attributed it.
+   *  Omitted by Rust for the parent's own work, which is almost every call. */
+  parent_tool_call_id?: string;
+  /** Epoch ms the thread first saw this call. Never moves on later updates. */
+  started_at_ms?: number;
+  /** Epoch ms the call first settled (completed, failed, rejected, cancelled).
+   *  Absent while it runs. */
+  ended_at_ms?: number;
 }
 
 export interface PlanEntry {
@@ -64,6 +72,16 @@ export interface SessionMessage {
    *  side omits the key rather than sending an empty list. */
   images?: MessageImage[];
   timestamp: string;
+  /** True when `timestamp` is only when Atlas replayed the message (an agent's
+   *  `session/load` replay carries no per-message time). Absent otherwise. */
+  timestamp_approximate?: boolean;
+  /** Wall time of the turn this message ends, in ms. Snapshot only — the live
+   *  stream carries it as `turn_finished.started_at_ms`/`ended_at_ms`. Absent
+   *  on every message but a turn's last, and on replayed turns. */
+  worked_ms?: number;
+  /** How the turn this message ends stopped (`end_turn`, `cancelled`, …). Set
+   *  on the same message as `worked_ms`. */
+  stop_reason?: string;
 }
 
 /** An image on a snapshot `SessionMessage` (`atlas_agent_wire::MessageImage`). */
@@ -101,6 +119,14 @@ export interface SessionModeInfo {
   id: string;
   name: string;
   description?: string | null;
+  /** Models only: who makes it, as the agent stated it — the gateway's
+   *  `publisher`, or the name of the group an ACP agent listed it under.
+   *  Absent when unstated; never inferred from the id. */
+  provider?: string | null;
+  /** Models only: newly released — the picker's "New" badge. */
+  is_new?: boolean;
+  /** Models only: superseded but still served — folded under "Legacy models". */
+  legacy?: boolean;
 }
 
 /** What `native_agent_refresh_models` returns — the picker's Refresh for the
@@ -142,6 +168,11 @@ export interface SessionSnapshot {
   prompt_image_supported: boolean;
   plan: PlanEntry[];
   messages: SessionMessage[];
+  /** Children this session delegated to, in launch order. Carried with the
+   *  transcript — a reloaded session whose subagents were dropped would show
+   *  the same delegated work as plain tool calls. Empty on the metadata-only
+   *  read (`agents_snapshot_meta`), like `messages`. */
+  subagents?: Subagent[];
   usage: Usage;
   created_at: string;
   updated_at: string;
@@ -230,6 +261,14 @@ export type AgentDelta =
       message_id: string;
       tool_call_id: string;
       delta: string;
+    }
+  | {
+      // A subagent was launched, made progress, or ended. The full snapshot
+      // travels, like `tool_call_upserted`, so nothing has to merge fields.
+      kind: "subagent_upserted";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      subagent: Subagent;
     }
   | {
       kind: "plan_updated";
@@ -348,6 +387,13 @@ export type AgentDelta =
       session_id: AcpSessionId;
       stop_reason: string;
       turn_seq?: number;
+      /** Epoch ms the turn opened. Absent when the thread never saw it open. */
+      started_at_ms?: number;
+      /** Epoch ms the turn stopped. */
+      ended_at_ms?: number;
+      /** How long the turn ran, in ms, on Rust's monotonic clock — not
+       *  `ended_at_ms - started_at_ms`, which a sleep or a clock step bends. */
+      worked_ms?: number;
     }
   | {
       kind: "turn_failed";
@@ -365,6 +411,16 @@ export type AgentDelta =
       max_attempts: number;
       delay_ms: number;
       last_error: string;
+    }
+  | {
+      /** The computer slept while this turn was running, so the reply may have
+       *  been cut off. Emitted by the host on waking, for any agent. */
+      kind: "slept_mid_turn";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      turn_seq: number;
+      /** Roughly how long the machine was asleep. */
+      slept_secs: number;
     }
   | {
       kind: "agent_disconnected";

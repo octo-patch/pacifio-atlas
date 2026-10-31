@@ -222,7 +222,7 @@ export function ComposerAddMenu({
               onPickProject={onPickProject}
             />
 
-            {/* Zed-style registry entry point: opens Settings → Agents. Agent
+            {/* Registry entry point: opens Settings → Agents. Agent
                 SWITCHING lives on the agent pill, not here — this menu is about
                 what you attach to a message, and the pill's picker now offers
                 one-click installs of its own (see FeaturedAgentOffers). */}
@@ -270,7 +270,7 @@ function GithubSubmenu({
     const on = () => loadCloned();
     window.addEventListener("atlas:repo-cloned", on);
     return () => window.removeEventListener("atlas:repo-cloned", on);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [projectPath]);
 
   // A searched repo is "already downloaded" when its on-disk dir (`owner-repo`)
@@ -553,7 +553,7 @@ function ProjectSubmenu({
                 </div>
               ) : projects.length === 0 ? (
                 <div className="px-3 py-1.5 text-xs text-[var(--muted-foreground)]">
-                  {query ? "No matches." : "No other projects in this organisation."}
+                  {query ? "No matches." : "No other projects in this organization."}
                 </div>
               ) : (
                 projects.map((w) => (

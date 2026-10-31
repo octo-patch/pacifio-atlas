@@ -154,11 +154,49 @@ export function prettyModel(model: string | null): string | null {
  *
  * A title that is *only* injected context strips to nothing, which is a truthful
  * `null` — the Session genuinely has no title of its own.
+ *
+ * Agent markup is stripped here too. Capture now derives past it
+ * (`crates/atlas-checkpoint/src/title.rs`), but titles stored before that fix
+ * are the first line verbatim — `<pasted_content id="8a17">` — and a title is
+ * set once and never re-derived, so this is what makes those read properly.
  */
 export function sessionTitle(title: string | null): string | null {
   if (!title) return null;
-  const clean = stripInjectedContext(title).trim();
+  const clean = stripAgentMarkup(stripInjectedContext(title)).trim();
   return clean.length > 0 ? clean : null;
+}
+
+/** Wrappers whose whole block is agent machinery, dropped with its content. */
+const DROPPED_BLOCK =
+  /<(system-reminder|local-command-caveat|local-command-stdout|local-command-stderr|command-message|bash-stdout|bash-stderr|task-notification|ide_opened_file|ide_selection)\b[^>]*>[\s\S]*?<\/\1\b[^>]*>/g;
+/** Wrapper tags around content that is still the person's: the tag goes, the text stays. */
+const WRAPPER_TAG = /<\/?(pasted_content|command-name|command-args|bash-input|user_query)\b[^>]*>/g;
+/** `[Image #1]`, `[Pasted text #2 +40 lines]`. */
+const ATTACHMENT_PLACEHOLDER = /\[(Image|Pasted text) #[^\]]*\]/g;
+/** A title that is one tag and nothing else — an agent wrapper we don't know by name. */
+const LONE_TAG = /^<\/?[A-Za-z][\w:-]*(\s[^<>]*)?\/?>$/;
+
+/**
+ * A stored title with agent wrapper markup taken out, mirroring the capture
+ * side's derivation for the one line a stored title is. A title that was only
+ * a paste opener reads as `Pasted text`, the same label capture now gives a
+ * paste-only prompt; any other lone tag is no title at all.
+ */
+export function stripAgentMarkup(title: string): string {
+  const trimmed = title.trim();
+  if (LONE_TAG.test(trimmed)) {
+    return /^<\/?pasted_content\b/.test(trimmed) ? "Pasted text" : "";
+  }
+  const stripped = trimmed
+    .replace(DROPPED_BLOCK, " ")
+    .replace(WRAPPER_TAG, " ")
+    .replace(ATTACHMENT_PLACEHOLDER, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (stripped.length > 0) return stripped;
+  if (/\[Pasted text #|<pasted_content\b/.test(trimmed)) return "Pasted text";
+  if (/\[Image #/.test(trimmed)) return "Image";
+  return "";
 }
 
 /** The agent's display name, from the plugin id the wire carries. */
@@ -196,6 +234,56 @@ function dayLabel(date: Date): string {
 /** `Jul 29` — the muted date beside a day label. */
 function shortDate(date: Date): string {
   return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/**
+ * A Session id, short enough to read.
+ *
+ * Ids on the wire are `as-5db94a5afb7c4caead736ba8df2ca0f2` or a bare UUID —
+ * 32 hex characters that say nothing and crowd out everything beside them in
+ * a header. Only the first few digits are ever used by a person, for the same
+ * reason a commit is quoted as `5db94a5`: enough to tell two apart, short
+ * enough to read in one glance.
+ *
+ * The prefix is kept when there is one, because it says what KIND of thing
+ * the id names. Anything already short is returned untouched — a server
+ * Session is `ses-983` and shortening that would be vandalism.
+ */
+export function shortSessionId(id: string): string {
+  const SHORT = 8;
+  const dash = id.indexOf("-");
+  // A prefix is a short leading run of letters, not the first dash in a UUID.
+  const prefix = dash > 0 && dash <= 4 && /^[a-z]+$/i.test(id.slice(0, dash)) ? dash + 1 : 0;
+  const body = id.slice(prefix);
+  if (body.length <= SHORT + 2) return id;
+  return id.slice(0, prefix) + body.slice(0, SHORT);
+}
+
+/**
+ * A day header in two parts: `October 13` and `Today`.
+ *
+ * The board prints them either side of a slash, bright then quiet, so the
+ * calendar date and the word for it are both readable at a glance — the date
+ * is what you scan for, the word is what orients you. Distinct from
+ * {@link dayLabel}, which folds both into one string for the narrower nav.
+ */
+export function dayHeading(date: Date, now = new Date()): { date: string; day: string } {
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
+  const sameYear = date.getFullYear() === now.getFullYear();
+  return {
+    date: date.toLocaleDateString(undefined, {
+      month: "long",
+      day: "numeric",
+      // The year only earns its space once it is ambiguous.
+      year: sameYear ? undefined : "numeric",
+    }),
+    day:
+      days === 0
+        ? "Today"
+        : days === 1
+          ? "Yesterday"
+          : date.toLocaleDateString(undefined, { weekday: "long" }),
+  };
 }
 
 /** Local Monday midnight of the week `d` falls in. */

@@ -30,12 +30,18 @@ import type {
   QueryHit,
 } from "@/features/memory/lib/memory-graph-api";
 import type { Policy } from "@/features/memory/lib/memory-policy-api";
+import type { HealthStatus } from "@/features/memory/lib/use-memory-health";
+import type { SessionWrite } from "@/features/memory/lib/use-session-memory-writes";
 import type { SummarizerPref } from "@/features/memory/lib/memory-sharing-api";
 import type {
   ClaudeImportPreview,
   EventKind,
   MemoryEntry,
   MemoryEvent,
+  Provenance,
+  ExportPreview,
+  RepoImportLine,
+  ReviewQueue,
   SharedState,
 } from "@/features/memory/lib/shared-memory-api";
 import type { TypedHandlers, Unit, Unread } from "../types";
@@ -763,6 +769,9 @@ const sharingEnabled = new Map<string, boolean>([
   [ALL_PROJECTS[2].path, false],
 ]);
 
+/** Reading sessions imported from outside Atlas: off by default, as in Rust. */
+const fromExternalSessions = new Map<string, boolean>();
+
 /** The BYOK summariser, so the provider/model picker opens on a selection
  *  rather than on the default `raw` (which hides the picker entirely). */
 const summarizers = new Map<string, SummarizerPref>([
@@ -1218,6 +1227,8 @@ function seededEntries(): MemoryEntry[] {
         updatedAt: ago(minutesAgo),
         lastUsedAt: uses ? ago(Math.max(10, minutesAgo / 4)) : null,
         uses,
+        revision: index + 1,
+        state: confidence < 0.5 ? "candidate" : "active",
       };
     },
   );
@@ -1276,6 +1287,8 @@ export interface MemoryResponses {
   memory_policy_update: Unit;
   memory_sharing_get: boolean;
   memory_sharing_set: Unit;
+  memory_from_external_sessions_get: boolean;
+  memory_from_external_sessions_set: Unit;
   memory_summarizer_get: SummarizerPref;
   memory_summarizer_set: Unit;
   memory_get_state: SharedState;
@@ -1286,6 +1299,24 @@ export interface MemoryResponses {
   memory_list_entries: MemoryEntry[];
   memory_edit_entry: MemoryEntry;
   memory_forget_entry: boolean;
+  memory_purge_entry: boolean;
+  memory_entry_provenance: Provenance[];
+  memory_accept_history: boolean;
+  memory_health_status: HealthStatus;
+  memory_feedback_entry: MemoryEntry | null;
+  memory_review: ReviewQueue;
+  memory_session_writes: SessionWrite[];
+  memory_promote: boolean;
+  memory_archive: number;
+  memory_merge: number;
+  memory_resolve_conflict: boolean;
+  memory_dream_accept: string;
+  memory_export_preview: ExportPreview;
+  memory_export_apply: string;
+  memory_repo_import_preview: RepoImportLine[];
+  memory_repo_import_confirm: number;
+  memory_repo_mirror_dir: string | null;
+  memory_dream_dismiss: Unit;
   memory_claude_import_preview: ClaudeImportPreview;
   memory_claude_import_confirm: number;
   memory_indexer_close_project: Unread;
@@ -1347,6 +1378,12 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
   memory_sharing_get: ({ projectPath }): boolean => sharingEnabled.get(String(projectPath)) ?? true,
   memory_sharing_set: ({ projectPath, enabled }): null => {
     sharingEnabled.set(String(projectPath), Boolean(enabled));
+    return null;
+  },
+  memory_from_external_sessions_get: ({ projectPath }): boolean =>
+    fromExternalSessions.get(String(projectPath)) ?? false,
+  memory_from_external_sessions_set: ({ projectPath, enabled }): null => {
+    fromExternalSessions.set(String(projectPath), Boolean(enabled));
     return null;
   },
   memory_summarizer_get: ({ projectPath }): SummarizerPref =>
@@ -1412,6 +1449,170 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
     entryLog.set(path, kept);
     return kept.length !== entries.length;
   },
+  // The mock keeps no history, so erasing is forgetting.
+  memory_purge_entry: ({ projectPath, id }): boolean => {
+    const path = String(projectPath);
+    const entries = entriesFor(path);
+    const kept = entries.filter((e) => e.id !== Number(id));
+    entryLog.set(path, kept);
+    return kept.length !== entries.length;
+  },
+  // The mock's memory is never damaged or edited behind its back.
+  memory_accept_history: (): boolean => false,
+  memory_feedback_entry: ({ projectPath, id, verdict }): MemoryEntry | null => {
+    const entry = entriesFor(String(projectPath)).find((e) => e.id === Number(id));
+    if (!entry) return null;
+    if (verdict === "wrong") entry.state = "archived";
+    else if (verdict === "stale") entry.state = "candidate";
+    else entry.uses += 1;
+    return entry;
+  },
+  memory_review: ({ projectPath }): ReviewQueue => ({
+    candidates: entriesFor(String(projectPath)).filter((e) => e.state === "candidate"),
+    merges: [],
+    conflicts: [],
+    dreams: [],
+  }),
+  // What the current chat session wrote, for the "Memory updated" block under
+  // the transcript. Every kind is represented, long names included: the block
+  // renders each kind as an icon, and the version before that gave the kind a
+  // fixed-width text column that `architecture` and `preference` overran into
+  // the content beside them. A `candidate` and an already-removed row cover
+  // the two states that change what the row offers.
+  memory_session_writes: (): SessionWrite[] => [
+    {
+      id: 901,
+      rev: 9010,
+      op: "insert",
+      kind: "architecture",
+      content:
+        "The web declares full theme token sets under `[data-theme=\"dark\"]` in CSS, while the desktop writes the active theme's variables at runtime, so inverted scopes must be generated in JS alongside the page's block in the same style element.",
+      state: "active",
+      at: ago(2),
+      live: true,
+    },
+    {
+      id: 902,
+      rev: 9020,
+      op: "insert",
+      kind: "preference",
+      content:
+        "Desktop rendering changes should mirror how the web does it; the web reference implementation lives in `~/Desktop/server`.",
+      state: "active",
+      at: ago(3),
+      live: true,
+    },
+    {
+      id: 903,
+      rev: 9030,
+      op: "insert",
+      kind: "failure",
+      content:
+        "lucide v1 dropped its brand icons, so GitHub/X marks must be inlined as SVG — a wrong-but-present glyph reads as a different product.",
+      state: "active",
+      at: ago(4),
+      live: true,
+    },
+    {
+      id: 904,
+      rev: 9040,
+      op: "insert",
+      kind: "decision",
+      content: "The comments side panel was retired, replaced by the footer comments morph.",
+      state: "active",
+      at: ago(5),
+      live: true,
+    },
+    {
+      id: 905,
+      rev: 9050,
+      op: "insert",
+      kind: "fact",
+      content:
+        "The desktop app has no localStorage equivalent for per-browser read state, so the comments panel ships All/Open tabs with no Unread tab.",
+      state: "candidate",
+      at: ago(6),
+      live: true,
+    },
+    {
+      id: 906,
+      rev: 9060,
+      op: "insert",
+      kind: "file_changed",
+      content: "src/features/memory/components/memory-updated-card.tsx",
+      state: "active",
+      at: ago(7),
+      live: false,
+    },
+  ],
+  memory_promote: ({ projectPath, id }): boolean => {
+    const entry = entriesFor(String(projectPath)).find((e) => e.id === Number(id));
+    if (!entry) return false;
+    entry.state = "active";
+    entry.confidence = Math.max(entry.confidence, 0.7);
+    return true;
+  },
+  memory_archive: ({ projectPath, ids }): number => {
+    const wanted = new Set((ids as number[]).map(Number));
+    const hit = entriesFor(String(projectPath)).filter((e) => wanted.has(e.id));
+    for (const e of hit) e.state = "archived";
+    return hit.length;
+  },
+  memory_merge: ({ projectPath, drop }): number => {
+    const wanted = new Set((drop as number[]).map(Number));
+    const hit = entriesFor(String(projectPath)).filter((e) => wanted.has(e.id));
+    for (const e of hit) e.state = "archived";
+    return hit.length;
+  },
+  memory_resolve_conflict: (): boolean => true,
+  memory_dream_accept: (): string => "accepted",
+  memory_export_preview: ({ projectPath, ids }): ExportPreview => {
+    const wanted = new Set((ids as number[]).map(Number));
+    const lines = entriesFor(String(projectPath))
+      .filter((e) => wanted.has(e.id))
+      .map((e) => `- ${e.content}`);
+    return {
+      path: `${String(projectPath)}/AGENTS.md`,
+      before: "",
+      after: [
+        "<!-- atlas-memory:begin -->",
+        "## Project memory (exported from Atlas)",
+        ...lines,
+        "<!-- atlas-memory:end -->",
+        "",
+      ].join("\n"),
+    };
+  },
+  memory_export_apply: ({ projectPath }): string => `${String(projectPath)}/AGENTS.md`,
+  memory_repo_import_preview: (): RepoImportLine[] => [],
+  memory_repo_import_confirm: (): number => 0,
+  memory_repo_mirror_dir: ({ projectPath }): string | null => {
+    const name = String(projectPath).split("/").pop() || "project";
+    return `${HOME}/.atlas/memory-repos/${name}-3f9c2ab1`;
+  },
+  memory_dream_dismiss: (): null => null,
+  memory_health_status: (): HealthStatus => ({
+    checkedAt: Date.now(),
+    record: { checkedAt: Date.now(), found: [], repaired: [], deferred: [] },
+    corpus: { rebuiltVectors: 0, rebuiltFts: false, recreated: false },
+    restored: null,
+  }),
+  memory_entry_provenance: ({ projectPath, id }): Provenance[] => {
+    const entry = entriesFor(String(projectPath)).find((e) => e.id === Number(id));
+    if (!entry) return [];
+    const added = new Date(entry.createdAt).toISOString().slice(0, 10);
+    return [
+      {
+        source: entry.sessionId
+          ? `atlas-session:${entry.agent || entry.source}/${entry.sessionId}`
+          : entry.source,
+        agent: entry.agent || entry.source,
+        added,
+        title: null,
+        commits: [],
+      },
+    ];
+  },
 
   // ── Claude auto-memory import ────────────────────────────────────────────
   memory_claude_import_preview: ({ projectPath }): ClaudeImportPreview =>
@@ -1440,6 +1641,8 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
         updatedAt: now,
         lastUsedAt: null,
         uses: 0,
+        revision: nextId,
+        state: "active",
       });
       line.isNew = false;
     }

@@ -34,7 +34,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ChatMessage } from "@/types/agent";
+import { isBusyAgentStatus, type ChatMessage } from "@/types/agent";
 import {
   agentMeta,
   catalogEntry as agentCatalogEntry,
@@ -45,23 +45,36 @@ import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-row
 import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useThawed } from "../lib/use-thawed";
 import { useChatStore } from "../stores/chat-store";
-import { saveThreadToKb } from "../lib/turn-actions";
 import { sessionCanRetry } from "../lib/retry-gate";
+import { latestResponseRowId } from "../lib/message-footer";
 import { pinScope } from "../stores/chat-pins-store";
+import { projectPathForTab } from "../lib/tab-project";
 import { cn } from "@/lib/utils";
+import { CONTENT_COLUMN } from "../lib/row-metrics";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { GradualBlur } from "@/components/gradual-blur";
 import { LoadingState, WAITING_LABEL } from "./loading-state";
+import { ResponseSelectionActions } from "./response-selection-actions";
 import {
   UserRowView,
   ProseRowView,
   ThinkingRowView,
   MarkerRowView,
   MarkerGroupRowView,
+  SubagentRowView,
   WorkHeaderRowView,
   SeparatorRowView,
   TurnFooterRowView,
 } from "./transcript-rows";
+import { InterruptionRowView } from "./interruption-row";
+import { InjectedRowView } from "./injected-row";
+import { TurnRail } from "./turn-rail";
+import {
+  deriveTurnRailItems,
+  stableTurnRailItems,
+  turnRailPreviewSource,
+  type TurnRailItem,
+} from "../lib/turn-rail";
 
 /**
  * How many rows are added each time the window grows.
@@ -98,11 +111,19 @@ const SCROLL_BOTTOM = 1 << 30;
  *  too, or the first message renders permanently blurred. */
 const TOP_BLUR_RAMP = 34;
 
+/** Without a header over it (the session's own view: its controls are in the
+ *  title bar), only a short soft edge where rows scroll out under the bar. */
+const TOP_EDGE_RAMP = 16;
+
 /** Gap left above an anchored row, so it doesn't sit flush against the top. */
 const ANCHOR_GAP = 24;
 /** The ring a comment jump leaves on the row it landed on, and for how long.
  *  Same treatment as the Timeline's `landed` row. */
-const LANDED_CLASSES = ["ring-1", "ring-[var(--atlas-border-strong)]", "rounded-lg"];
+// `ring-inset`: a ring is a box-shadow, drawn OUTSIDE the box by default. The
+// content column fills the transcript's width once the pane is narrower than
+// the reading measure (the overview rail open does it), and an outer ring then
+// sat past the scroller's edges — clipped on both sides, top and bottom only.
+const LANDED_CLASSES = ["ring-1", "ring-inset", "ring-[var(--atlas-border-strong)]", "rounded-lg"];
 const LANDED_MS = 2_000;
 
 /** Breathing room between the last row and the composer. Applied as content
@@ -134,8 +155,10 @@ interface TranscriptProps {
    *  the work header must not read it as the turn being over and fold it. */
   turnInProgress?: boolean;
   agentType?: string;
-  /** Vertical space (px) reserved at the top for the floating header, applied as
-   *  content padding so the first row clears it while still scrolling under. */
+  /** Vertical space (px) reserved at the top for a header floating over the
+   *  transcript, applied as content padding so the first row clears it while
+   *  still scrolling under. `0` (the session view) is no header: just a soft
+   *  top edge. */
   topInset?: number;
   onShowJumpChange?: (visible: boolean, newCount?: number) => void;
   /** What the working indicator says while the session is still binding and
@@ -153,6 +176,9 @@ interface TranscriptProps {
   /** Bumped on every restart so the indicator's elapsed clock (and its stall
    *  state) start over with the new attempt. */
   workingEpoch?: number;
+  /** Rendered under the last row while no turn is running (the "Memory
+   *  updated" card). */
+  footer?: React.ReactNode;
 }
 
 /** Per (tab, session) scroll position, so switching away and back returns the
@@ -210,7 +236,7 @@ function WorkingIndicator({
       />
     ) : undefined;
   return (
-    <div className="mx-auto w-full max-w-[760px] px-6 pt-2 pb-3">
+    <div className={cn(CONTENT_COLUMN, "pt-2 pb-3")}>
       <LoadingState label={label} stalledContent={stall} />
     </div>
   );
@@ -282,6 +308,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     onStallSwitch,
     onStallCopyDiagnostics,
     workingEpoch,
+    footer,
   },
   ref,
 ) {
@@ -289,6 +316,11 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const contentRef = useRef<HTMLDivElement>(null);
   const cacheKey = `${tabId}:${acpSessionId}`;
   const pinScopeKey = pinScope(tabId, acpSessionId);
+  // The project root paths in this session resolve against: the one the
+  // session was created with, else its tab's project. A primitive, read once
+  // here, so rows render file chips without reading a store themselves.
+  const workingDirectory = useChatStore((s) => s.sessions[tabId]?.workingDirectory);
+  const fileRoot = workingDirectory || projectPathForTab(tabId) || undefined;
   const agent = switchable(agentType);
   // Is this tab the one showing in its column? Boolean selector: flips only
   // for the two tabs involved in a switch. Gates the idle window fill below.
@@ -340,6 +372,33 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   // flag `supportsFork` uses, computed from the live connection.
   const supportsRewind = agentCatalogEntry(agent)?.supportsRewind === true;
   const canRetry = useChatStore((s) => sessionCanRetry(s.sessions[tabId], supportsRewind));
+  // Whether a new message could go out now — an interrupted turn's Continue.
+  // Same O(1) bargain as `canRetry`. A disconnected session counts: sending
+  // is what respawns it.
+  const canContinue = useChatStore((s) => {
+    const session = s.sessions[tabId];
+    return !!session && !isBusyAgentStatus(session.status) && !session.stopping;
+  });
+  // Whether the session could be forked right now — the header's "Branch from
+  // here" gate (agent advertised `fork`, session bound), plus idle: a fork
+  // taken mid-turn would copy a half-written response. Same O(1) bargain.
+  const supportsFork = agentCatalogEntry(agent)?.supportsFork === true;
+  const canBranch = useChatStore((s) => {
+    const session = s.sessions[tabId];
+    return (
+      supportsFork &&
+      !!session?.acpAgentId &&
+      !!session.acpSessionId &&
+      !isBusyAgentStatus(session.status) &&
+      !session.stopping
+    );
+  });
+
+  // Delegated children, keyed by their launching call. A stable reference —
+  // immer re-identifies it only when a child changes — so this subscription
+  // settles, and it is `undefined` for the overwhelming majority of sessions,
+  // where the projection then behaves exactly as it did before.
+  const subagents = useChatStore((s) => s.sessions[tabId]?.subagents);
 
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   /** Tool sequences the reader has opened. */
@@ -378,12 +437,18 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     if (!live && prevProjectionRef.current) return prevProjectionRef.current;
     const next = projectRows(
       messages,
-      { expanded, expandedTurns, streaming: isStreaming, turnInProgress },
+      {
+        expanded,
+        expandedTurns,
+        streaming: isStreaming,
+        turnInProgress,
+        subagents,
+      },
       prevProjectionRef.current,
     );
     prevProjectionRef.current = next;
     return next;
-  }, [messages, expanded, expandedTurns, isStreaming, turnInProgress, live]);
+  }, [messages, expanded, expandedTurns, isStreaming, turnInProgress, live, subagents]);
   const rows: Row[] = projection.rows;
 
   // ── Is the live turn still silent? ───────────────────────────────────
@@ -402,7 +467,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const [startIndex, setStartIndex] = useState(() => Math.max(0, rows.length - WINDOW_INITIAL));
 
   // A projection that SHRINKS — "New chat" resetting the session in place, a
-  // project switch dropping history, a role filter — leaves `startIndex`
+  // project switch dropping history — leaves `startIndex`
   // pointing into a thread that no longer exists. Every other writer only ever
   // moves the start DOWN (growth, jump-to-message) or sets it to this floor, so
   // a start above the floor is unreachable except by a shrink: that is the
@@ -429,6 +494,8 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     }
     return undefined;
   }, [rows]);
+  // Branch belongs to the latest settled response, for the same reason.
+  const latestResponseId = useMemo(() => latestResponseRowId(rows), [rows]);
   const canGrow = safeStart > 0;
 
   // Fold the correction back into state. Rendering from `safeStart` alone
@@ -650,7 +717,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     // Widen the window if that turn falls outside it.
     let lastUser = -1;
     for (let i = rows.length - 1; i >= 0; i--) {
-      if (rows[i].kind === RowKind.User) {
+      if (rows[i].kind === RowKind.User || rows[i].kind === RowKind.Injected) {
         lastUser = i;
         break;
       }
@@ -706,13 +773,18 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
       }
     }
     const anchor = landed ?? node;
+    // Clear the floating header and its blur band, not just the scroller's
+    // edge: a gap of `ANCHOR_GAP` alone parked the landed row under the bar,
+    // blurred. With a header the gap is the content's own top padding, so a
+    // jump to the first row lands exactly where it rests.
+    const gap = topInset ? topInset + TOP_BLUR_RAMP + 12 : ANCHOR_GAP;
     // `offsetTop` is measured from the positioned ancestor, so it is
     // independent of the current scroll position.
-    el.scrollTop = Math.max(0, anchor.offsetTop - ANCHOR_GAP);
+    el.scrollTop = Math.max(0, anchor.offsetTop - gap);
     // Hold this row in place while the screenful of markdown around it
     // finishes parsing. Without this the reader watches the thread creep as
     // each block swaps from placeholder to formatted.
-    stickyRef.current = { rowId: anchor.dataset.rowId ?? id, offset: ANCHOR_GAP };
+    stickyRef.current = { rowId: anchor.dataset.rowId ?? id, offset: gap };
     stickyUntil.current = performance.now() + STICKY_SETTLE_MS;
     invalidate();
     if (landed) markLanded(landed);
@@ -815,8 +887,8 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   //  * The target row is ALREADY in the window. `setStartIndex` with an
   //    unchanged value schedules no render, so the anchor layout effect never
   //    ran and nothing moved. `jumpTick` exists purely to force that render.
-  //  * The caller has just changed the message list (the pin jump clears the
-  //    role filter first) and dispatched in the same tick, so the projection
+  //  * The caller dispatched in the same tick as a change to the message
+  //    list, so the projection
   //    we hold is the OLD one and the index is not in it yet. The index is
   //    parked in `pendingJumpRef` and retried when the projection changes.
   const pendingJumpRef = useRef<number | null>(null);
@@ -858,6 +930,26 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     pendingJumpRef.current = null;
   }, [cacheKey]);
 
+  // ── Turn rail ────────────────────────────────────────────────────────
+  // One tick per user turn. Held stable across streaming frames (see
+  // `stableTurnRailItems`), so the memo'd rail re-renders only when a prompt
+  // is sent or history loads. The preview reads the latest rows on demand,
+  // which keeps the reply's text out of the rail's props entirely.
+  const turnRailItemsRef = useRef<readonly TurnRailItem[] | null>(null);
+  const turnRailItems = useMemo(() => {
+    const next = stableTurnRailItems(turnRailItemsRef.current, deriveTurnRailItems(projection));
+    turnRailItemsRef.current = next;
+    return next;
+  }, [projection]);
+  const getTurnRailPreview = useCallback(
+    (item: TurnRailItem) => turnRailPreviewSource(rowsRef.current, item.id),
+    [],
+  );
+  const selectTurnRailItem = useCallback(
+    (item: TurnRailItem) => scrollToMessage(item.messageIndex),
+    [scrollToMessage],
+  );
+
   useImperativeHandle(ref, () => ({ scrollToBottom, scrollToMessage }), [
     scrollToBottom,
     scrollToMessage,
@@ -865,7 +957,12 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ index: number; highlightRowIds?: string[] }>).detail;
+      const detail = (
+        e as CustomEvent<{ index: number; tabId?: string; highlightRowIds?: string[] }>
+      ).detail;
+      // A jump addressed to another chat is not ours (an unaddressed one, from
+      // an older sender, still is).
+      if (detail?.tabId && detail.tabId !== tabId) return;
       if (typeof detail?.index === "number") {
         pendingHighlightRef.current = detail.highlightRowIds ?? null;
         scrollToMessage(detail.index);
@@ -873,10 +970,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
     };
     window.addEventListener("atlas:chat-jump", handler);
     return () => window.removeEventListener("atlas:chat-jump", handler);
-  }, [scrollToMessage]);
-
-  // ── Turn-footer actions ──────────────────────────────────────────────
-  const onSaveKb = useCallback(() => void saveThreadToKb(tabId), [tabId]);
+  }, [scrollToMessage, tabId]);
 
   // ── The rows, as one memoized element ────────────────────────────────
   //
@@ -893,6 +987,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   // or changes at most once per turn. `visible` is the projection's own slice,
   // so it holds while the projection does.
   const canRetryRowId = canRetry ? lastUserRowId : undefined;
+  const canBranchRowId = canBranch ? latestResponseId : undefined;
   const rowViews = useMemo(
     () =>
       visible.map((row, i) => (
@@ -900,7 +995,15 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
         // (`user-row-actions.tsx`), which is hidden until the row is hovered.
         // The fling hover-suspension in `use-transcript-scroll.ts` keeps hover
         // styles from firing as rows pass under a resting pointer mid-scroll.
-        <div key={row.id} className="atlas-row group group/row" data-row-id={row.id}>
+        // `data-footer-below` marks a response whose hover footer is drawn by
+        // the turn footer row after it; hovering the response reveals it too
+        // (`globals.css`).
+        <div
+          key={row.id}
+          className="atlas-row group group/row"
+          data-row-id={row.id}
+          data-footer-below={row.kind === RowKind.Prose && row.footerBelow ? "" : undefined}
+        >
           <RowView
             row={row}
             tabId={tabId}
@@ -912,9 +1015,11 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
             // within `visible` would shift as the window grows.
             priority={safeStart + i}
             onToggleExpand={toggleExpand}
-            onSaveKb={onSaveKb}
             canRetryRowId={canRetryRowId}
+            canBranchRowId={canBranchRowId}
+            canContinue={canContinue}
             pinScopeKey={pinScopeKey}
+            fileRoot={fileRoot}
           />
         </div>
       )),
@@ -925,10 +1030,12 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
       agentLabel,
       entranceMessageId,
       canRetryRowId,
+      canBranchRowId,
+      canContinue,
       pinScopeKey,
+      fileRoot,
       toggleTurn,
       toggleExpand,
-      onSaveKb,
     ],
   );
 
@@ -937,7 +1044,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="atlas-transcript h-full overflow-y-auto hide-scrollbar [overflow-anchor:none]"
+        className="h-full overflow-y-auto hide-scrollbar [overflow-anchor:none]"
       >
         {/* Pad past the ENTIRE blur band, not just the bar. Padding by the
               header height alone left the first message sitting inside the
@@ -945,7 +1052,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
         <div
           ref={contentRef}
           style={{
-            paddingTop: topInset ? topInset + TOP_BLUR_RAMP + 12 : undefined,
+            paddingTop: topInset ? topInset + TOP_BLUR_RAMP + 12 : TOP_EDGE_RAMP + 4,
             paddingBottom: BOTTOM_GAP,
           }}
         >
@@ -955,6 +1062,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
             </div>
           )}
           {rowViews}
+          {!turnInProgress && footer}
           {working && (
             <WorkingIndicator
               key={workingEpoch}
@@ -967,6 +1075,19 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
         </div>
       </div>
 
+      <ResponseSelectionActions viewportRef={scrollRef} tabId={tabId} enabled={live} />
+
+      {/* Hangs left into the gutter outside this box; takes no space. */}
+      <TurnRail
+        items={turnRailItems}
+        scrollRef={scrollRef}
+        contentRef={contentRef}
+        topInset={topInset}
+        windowStart={safeStart}
+        getPreview={getTurnRailPreview}
+        onSelect={selectTurnRailItem}
+      />
+
       {/* Progressive blur behind the floating header. It starts at y=0 and
             runs past the bar, so text scrolling underneath is blurred rather
             than clipped by an opaque strip — which is only possible because the
@@ -974,7 +1095,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
             plus a short ramp below it. */}
       <GradualBlur
         position="top"
-        height={`${topInset + TOP_BLUR_RAMP}px`}
+        height={`${topInset ? topInset + TOP_BLUR_RAMP : TOP_EDGE_RAMP}px`}
         strength={2.1}
         layers={5}
         // Mostly-opaque behind the bar itself, ramping to clear below it.
@@ -1021,9 +1142,11 @@ function RowView({
   priority,
   onToggleExpand,
   onExpandTurn,
-  onSaveKb,
   canRetryRowId,
+  canBranchRowId,
+  canContinue,
   pinScopeKey,
+  fileRoot,
 }: {
   row: Row;
   justSentMessageId?: string;
@@ -1032,14 +1155,21 @@ function RowView({
   priority: number;
   onToggleExpand: (id: string) => void;
   onExpandTurn: (turnId: string) => void;
-  onSaveKb: () => void;
   /** Id of the one row allowed to show a retry button, or `undefined` when no
    *  retry is possible. An id compare here keeps `UserRowView`'s prop a plain
    *  boolean. */
   canRetryRowId?: string;
+  /** Id of the one prose row allowed to show "Branch from here" — the latest
+   *  settled response — or `undefined` when the session cannot fork now. */
+  canBranchRowId?: string;
+  /** Whether a message could be sent now (an interrupted turn's Continue). */
+  canContinue: boolean;
   /** Pin scope for this thread — resolved once here rather than per row, so a
    *  row never reads the chat store. */
   pinScopeKey: string;
+  /** The session's project root, for file chips. Resolved once, like
+   *  `pinScopeKey`. */
+  fileRoot?: string;
 }) {
   switch (row.kind) {
     case RowKind.User:
@@ -1054,6 +1184,7 @@ function RowView({
           tabId={tabId}
           canRetry={row.id === canRetryRowId}
           pinScopeKey={pinScopeKey}
+          fileRoot={fileRoot}
           onToggleExpand={onToggleExpand}
         />
       );
@@ -1065,6 +1196,8 @@ function RowView({
           agentLabel={agentLabel}
           priority={priority}
           pinScopeKey={pinScopeKey}
+          canBranch={row.id === canBranchRowId}
+          fileRoot={fileRoot}
         />
       );
     case RowKind.Thinking:
@@ -1073,13 +1206,32 @@ function RowView({
       return <MarkerRowView row={row} tabId={tabId} />;
     case RowKind.MarkerGroup:
       return <MarkerGroupRowView row={row} tabId={tabId} onExpandTurn={onExpandTurn} />;
+    case RowKind.Subagent:
+      return <SubagentRowView row={row} tabId={tabId} />;
     case RowKind.Separator:
       return <SeparatorRowView row={row} />;
     case RowKind.WorkHeader:
       return <WorkHeaderRowView row={row} onToggle={onExpandTurn} />;
     case RowKind.TurnFooter:
-      // made a fresh closure per render and defeated the memo on footer rows.
-      return <TurnFooterRowView row={row} onSaveKb={onSaveKb} />;
+      return (
+        <TurnFooterRowView
+          row={row}
+          tabId={tabId}
+          pinScopeKey={pinScopeKey}
+          canBranch={row.responseRowId !== undefined && row.responseRowId === canBranchRowId}
+        />
+      );
+    case RowKind.Injected:
+      return <InjectedRowView row={row} />;
+    case RowKind.Interruption:
+      return (
+        <InterruptionRowView
+          row={row}
+          tabId={tabId}
+          canRetry={canRetryRowId !== undefined}
+          canContinue={canContinue}
+        />
+      );
     default:
       return null;
   }

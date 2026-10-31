@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Popover } from "@base-ui/react/popover";
 import { useAppStore } from "@/features/app/stores/app-store";
 import {
@@ -19,9 +18,20 @@ import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
 import { useAppProfile } from "@/lib/app-profile";
 import { HintGroup, HintItem } from "@/ui/hint-group";
+import { ScrollFade, useScrollEdges } from "@/ui/scroll-fade";
 import { logEvent } from "@/features/log/lib/log";
 import { toast } from "sonner";
 import { metaFromSearch, type ClonedRepo, type GithubRepo } from "@/features/github/types";
+import {
+  cloneGithubRepo,
+  deleteClonedRepo,
+  fetchClonedRepoMeta,
+  listClonedRepos,
+  listRemoteBranches,
+  searchGithub,
+  switchClonedRepoBranch,
+  updateClonedRepo,
+} from "@/features/github/lib/github-api";
 
 /**
  * The GitHub panel: search public repositories, clone them as reference
@@ -43,46 +53,10 @@ const GROUP_BUTTON =
   "flex size-5 items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-element-active cursor-pointer disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent";
 const GROUP = "flex items-center gap-px rounded-full border border-border-subtle bg-card p-0.5";
 
-/** Top/bottom edge fades on a scroll container, only while there is more to scroll. */
-function useScrollEdges(ref: React.RefObject<HTMLDivElement | null>, deps: unknown[]) {
-  const [edges, setEdges] = useState({ top: false, bottom: false });
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () => {
-      const top = el.scrollTop > 2;
-      const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 2;
-      setEdges((cur) => (cur.top === top && cur.bottom === bottom ? cur : { top, bottom }));
-    };
-    measure();
-    el.addEventListener("scroll", measure, { passive: true });
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => {
-      el.removeEventListener("scroll", measure);
-      ro.disconnect();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return edges;
-}
-
-function ScrollFade({ at, visible }: { at: "top" | "bottom"; visible: boolean }) {
-  return (
-    <div
-      aria-hidden
-      className={cn(
-        // The right panel paints `--card`, not `--background`; fading
-        // from the wrong colour was a faint grey wash over black, invisible.
-        "pointer-events-none absolute inset-x-0 z-10 h-14 transition-opacity duration-200",
-        at === "top"
-          ? "top-0 bg-gradient-to-b from-[var(--card)] via-[var(--card)]/80 to-transparent"
-          : "bottom-0 bg-gradient-to-t from-[var(--card)] via-[var(--card)]/80 to-transparent",
-        visible ? "opacity-100" : "opacity-0",
-      )}
-    />
-  );
-}
+/** The scroll fades' gradient. The right panel paints `--card`, not
+ *  `--background`; fading from the wrong colour was a faint grey wash over
+ *  black, invisible. */
+const FADE = "from-[var(--card)] via-[var(--card)]/80";
 
 /** Branch picker: a popover with a filter box over origin's branches. */
 function BranchPicker({
@@ -105,7 +79,7 @@ function BranchPicker({
     if (!open || branches) return;
     let cancelled = false;
     setError(null);
-    invoke<string[]>("list_remote_branches", { projectPath, repoName: repo.name })
+    listRemoteBranches(projectPath, repo.name)
       .then((list) => {
         if (!cancelled) setBranches(list);
       })
@@ -238,7 +212,7 @@ function ClonedRow({
     if (busy) return;
     setBusy("switch");
     try {
-      await invoke("switch_cloned_repo_branch", { projectPath, repoName: repo.name, branch });
+      await switchClonedRepoBranch(projectPath, repo.name, branch);
       toast.success(`${repo.display_name} is on ${branch}`);
       onChanged();
     } catch (e) {
@@ -252,10 +226,7 @@ function ClonedRow({
     if (busy) return;
     setBusy("update");
     try {
-      const branch = await invoke<string>("update_cloned_repo", {
-        projectPath,
-        repoName: repo.name,
-      });
+      const branch = await updateClonedRepo(projectPath, repo.name);
       toast.success(`${repo.display_name} updated to origin/${branch}`);
       onChanged();
     } catch (e) {
@@ -273,7 +244,7 @@ function ClonedRow({
     }
     setBusy("delete");
     try {
-      await invoke("delete_cloned_repo", { projectPath, repoName: repo.name });
+      await deleteClonedRepo(projectPath, repo.name);
       window.dispatchEvent(new Event("atlas:repo-cloned"));
       onChanged();
     } catch (e) {
@@ -403,7 +374,7 @@ export function GithubPanel() {
       return;
     }
     try {
-      setRepos(await invoke<ClonedRepo[]>("list_cloned_repos", { projectPath }));
+      setRepos(await listClonedRepos(projectPath));
     } catch {
       setRepos([]);
     }
@@ -431,10 +402,7 @@ export function GithubPanel() {
       for (let r = queue.shift(); r && !cancelled; r = queue.shift()) {
         backfilled.current.add(r.name);
         try {
-          const meta = await invoke<ClonedRepo["meta"]>("fetch_cloned_repo_meta", {
-            projectPath,
-            repoName: r.name,
-          });
+          const meta = await fetchClonedRepoMeta(projectPath, r.name);
           if (cancelled) return;
           setRepos((cur) => cur.map((x) => (x.name === r!.name ? { ...x, meta } : x)));
         } catch {
@@ -453,7 +421,7 @@ export function GithubPanel() {
     setLoading(true);
     setError(null);
     try {
-      const found = await invoke<GithubRepo[]>("search_github", { query: query.trim() });
+      const found = await searchGithub(query.trim());
       setResults(found);
     } catch (e) {
       setError(String(e));
@@ -476,12 +444,7 @@ export function GithubPanel() {
     setCloning((s) => new Set(s).add(repo.full_name));
     try {
       const repoName = repo.full_name.replace("/", "-");
-      await invoke("clone_github_repo", {
-        projectPath: currentProject.path,
-        cloneUrl: repo.clone_url,
-        repoName,
-        meta: metaFromSearch(repo),
-      });
+      await cloneGithubRepo(currentProject.path, repo.clone_url, repoName, metaFromSearch(repo));
       setCloned((s) => new Set(s).add(repo.full_name));
       window.dispatchEvent(new Event("atlas:repo-cloned"));
       logEvent({
@@ -523,8 +486,8 @@ export function GithubPanel() {
       </div>
 
       <div className="relative flex-1 min-h-0">
-        <ScrollFade at="top" visible={edges.top} />
-        <ScrollFade at="bottom" visible={edges.bottom} />
+        <ScrollFade className={FADE} at="top" visible={edges.top} />
+        <ScrollFade className={FADE} at="bottom" visible={edges.bottom} />
         <div ref={scrollRef} className="h-full overflow-y-auto hide-scrollbar">
           {/* Cloned repos — the resting state, hidden while a search is typed. */}
           {!searching &&
