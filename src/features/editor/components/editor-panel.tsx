@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { Code2, Eye, RefreshCw, Table2, WrapText } from "lucide-react";
@@ -27,9 +20,7 @@ import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys"
 import { useFileTabFrame } from "@/features/explorer/lib/file-tab-frame-context";
 import { openInProject } from "@/features/explorer/lib/open-in-project";
 import { revealFiles } from "@/features/layout/lib/files-surface";
-import { BLAME_PART_COLOR } from "../lib/blame";
 import { registerEditorView } from "../lib/editor-views";
-import { FileDecorations } from "../lib/file-decorations";
 import { filePreviewDelimiter } from "../lib/delimited-preview";
 import { relativeToRoot, retainedBreadcrumbTrail } from "../lib/file-path";
 import { registerFileSaver } from "../lib/dirty-close";
@@ -47,7 +38,7 @@ import {
   writeRenderedPreference,
 } from "../lib/file-preview-mode";
 import { useFileSaveCoordinator } from "../lib/use-file-save-coordinator";
-import { CodeFileView, type CodeFileViewHandle } from "./code-file-view";
+import { CodeMirrorFileView, type CodeMirrorFileViewHandle } from "./codemirror-file-view";
 import { DelimitedTablePreview } from "./delimited-table-preview";
 import { FileBreadcrumbsRow, type FileBreadcrumbsProps } from "./file-breadcrumbs";
 import { FileFindBar } from "./file-find-bar";
@@ -61,11 +52,9 @@ import {
   FileTreeToggle,
 } from "./file-surface-chrome";
 import { FILE_DOCK_RESERVE } from "@/features/explorer/lib/file-tabs";
-import { useAgentChatTarget } from "@/features/chat/lib/send-to-agent";
-import { useFileReviewComments } from "../lib/use-file-review-comments";
 
 /**
- * A file tab: the file's text in the code view (`code-file-view.tsx`),
+ * A file tab: the file's text in the code editor (`codemirror-file-view.tsx`),
  * editable in place, or — for markdown, CSV/TSV and HTML — rendered, with a
  * toggle between the two.
  *
@@ -112,8 +101,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   } = useEditorStore.use.actions();
   const projectPath = useAppStore.use.currentProject()?.path ?? "";
   const layoutActions = useLayoutStore.use.actions();
-  const viewRef = useRef<CodeFileViewHandle | null>(null);
-  const [decorations] = useState(() => new FileDecorations());
+  const viewRef = useRef<CodeMirrorFileViewHandle | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Set when the file is over `MAX_OPEN_BYTES`: it is never read.
   const [tooLargeBytes, setTooLargeBytes] = useState<number | null>(null);
@@ -195,24 +183,20 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   const refreshDiffGutter = useCallback(() => {
     if (isUntitled || !relPath) return;
     void gitDiffLineStatus(projectPath, relPath, false)
-      .then((status) => decorations.setStatus(status))
+      .then((status) => viewRef.current?.setDiffStatus(status))
       .catch(() => {});
-  }, [decorations, projectPath, relPath, isUntitled]);
+  }, [projectPath, relPath, isUntitled]);
 
   // Blame is computed against the file on disk, so it is not fetched while
-  // the buffer is dirty (line numbers would misalign): the decorations keep
-  // the last snapshot, shifted through the edits, edited lines uncommitted.
+  // the buffer is dirty (line numbers would misalign): the inline blame keeps
+  // the last snapshot, edited lines reading "Uncommitted changes".
   const refreshBlame = useCallback(() => {
     if (isUntitled || !relPath || !gitBlameInline) return;
     if (useEditorStore.getState().buffers[path]?.dirty) return;
     void gitBlameFile(projectPath, relPath)
-      .then((lines) => decorations.setBlame(lines))
+      .then((lines) => viewRef.current?.setBlame(lines))
       .catch(() => {});
-  }, [decorations, path, projectPath, relPath, isUntitled, gitBlameInline]);
-
-  useEffect(() => {
-    if (!gitBlameInline) decorations.setBlame(null);
-  }, [decorations, gitBlameInline]);
+  }, [path, projectPath, relPath, isUntitled, gitBlameInline]);
 
   // ── Save ──
   const persistedMtime = useRef(0);
@@ -465,23 +449,6 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
 
   useEffect(() => registerEditorView(tabId, () => viewRef.current?.position()), [tabId]);
 
-  // The gutter's `+` on a line (or a dragged range): a comment on those
-  // lines for the session, quoting them, as the diff's line comments do. The
-  // path it names is root-relative when the file is in the project. The
-  // session is the one `sendToAgentChat` writes to; with none open the
-  // gutter offers nothing.
-  const commentRoot = frame?.root ?? (relPath !== null ? projectPath : null);
-  const comments = useFileReviewComments({
-    chatTabId: useAgentChatTarget(),
-    absPath: path,
-    filePath: (commentRoot ? relativeTo(path, commentRoot) : null) ?? path,
-    getContents: () => viewRef.current?.getText() ?? buffer?.originalContent ?? "",
-  });
-
-  useEffect(() => {
-    decorations.setLayout(wordWrap, gitBlameInline);
-  }, [decorations, wordWrap, gitBlameInline]);
-
   const name = path.split("/").pop() ?? path;
   const crumbs: FileBreadcrumbsProps | null = crumbTarget
     ? {
@@ -515,7 +482,6 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
           identity={frame?.titled === false ? { path, dirty: buffer?.dirty ?? false } : null}
         />
       )}
-      {buffer && !rendered && <HeaderBlame decorations={decorations} />}
       {/* `ml-auto` on the group, not on whichever child happens to render,
           keeps the controls pinned right whichever of them are present. */}
       <div className="ml-auto flex items-center gap-1 pl-2">
@@ -628,7 +594,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
               onClose={() => setPlainFind((f) => ({ ...f, open: false }))}
             />
           )}
-          <CodeFileView
+          <CodeMirrorFileView
             key={path}
             handleRef={viewRef}
             name={path}
@@ -636,11 +602,14 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
             version={docVersion}
             wordWrap={wordWrap}
             readOnly={large}
-            decorations={decorations}
+            blame={gitBlameInline}
             reveal={pendingReveal}
             onRevealed={(nonce) => consumeReveal(path, nonce)}
             onChange={(content) => save.change(content)}
-            comments={isUntitled ? null : comments}
+            onReady={() => {
+              refreshDiffGutter();
+              refreshBlame();
+            }}
           />
         </div>
       )}
@@ -661,27 +630,6 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       )}
       {rendered && renderedMode === "html" && <HtmlPreview html={shownText} title={name} />}
     </>,
-  );
-}
-
-/** The cursor line's blame beside the breadcrumbs, for a wrapping view: it
- *  takes what the crumbs leave and truncates first. Subscribes on its own, so a cursor
- *  move repaints this and nothing else. */
-function HeaderBlame({ decorations }: { decorations: FileDecorations }) {
-  const parts = useSyncExternalStore(decorations.subscribe, decorations.headerBlame);
-  if (!parts) return null;
-  const label = parts.map((p) => p.text).join("");
-  return (
-    <span
-      className="ml-1 min-w-0 flex-1 basis-0 truncate text-xs italic opacity-80 select-none"
-      title={label}
-    >
-      {parts.map((part, i) => (
-        <span key={i} style={{ color: BLAME_PART_COLOR[part.kind] }}>
-          {part.text}
-        </span>
-      ))}
-    </span>
   );
 }
 

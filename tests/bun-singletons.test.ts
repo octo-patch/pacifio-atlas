@@ -62,6 +62,7 @@ const EXPECTED_DEDUPE = [
   "@codemirror/view",
   "@codemirror/language",
   "@codemirror/commands",
+  "@codemirror/search",
   "@codemirror/autocomplete",
   "@lezer/common",
   "@lezer/highlight",

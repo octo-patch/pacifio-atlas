@@ -41,7 +41,8 @@ export default defineConfig(() => ({
         "node_modules/decode-named-character-reference/index.js",
       ),
     },
-    // Dedupe CodeMirror + Lezer (the team-chat draft editor). lang-markdown and
+    // Dedupe CodeMirror + Lezer (the file editor and the team-chat draft
+    // editor). lang-markdown and
     // the grammars it nests (html, css, javascript) each transitively import
     // @codemirror/{state,view,language} and @lezer/{common,highlight,lr};
     // without dedup Rollup can ship two copies, and facets/extensions from
@@ -57,6 +58,7 @@ export default defineConfig(() => ({
       "@codemirror/view",
       "@codemirror/language",
       "@codemirror/commands",
+      "@codemirror/search",
       "@codemirror/autocomplete",
       "@lezer/common",
       "@lezer/highlight",
@@ -81,6 +83,7 @@ export default defineConfig(() => ({
       "@codemirror/view",
       "@codemirror/language",
       "@codemirror/commands",
+      "@codemirror/search",
       "@codemirror/autocomplete",
       "@lezer/common",
       "@lezer/highlight",
@@ -223,8 +226,7 @@ export default defineConfig(() => ({
               test: (id) =>
                 !id.endsWith(".css") &&
                 !id.includes("@codemirror/lang-") &&
-                (id.includes("@codemirror") ||
-                  /@lezer\/(common|highlight|lr)\//.test(id)),
+                (id.includes("@codemirror") || /@lezer\/(common|highlight|lr)\//.test(id)),
             },
             {
               name: "vendor-xterm",
@@ -299,8 +301,7 @@ export default defineConfig(() => ({
               name: "vendor-pdf",
               priority: 30,
               test: (id) =>
-                !id.endsWith(".css") &&
-                (id.includes("pdfjs-dist") || id.includes("react-pdf")),
+                !id.endsWith(".css") && (id.includes("pdfjs-dist") || id.includes("react-pdf")),
             },
             {
               name: "vendor-tauri",

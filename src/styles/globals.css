@@ -3042,7 +3042,7 @@ html[data-chat-width="full"] {
 /* Two diff colours that are not theme keys, only status colours the theme
    already has, until the palette below takes those for additions and
    removals: a changed line's bar in the file view's line numbers
-   (`file-decorations.ts`), and a modified file's mark in the review diff (its
+   (`diff-gutter.ts`), and a modified file's mark in the review diff (its
    header icon, its tree row). */
 :root {
   --atlas-diff-changed-bar: var(--atlas-status-info-foreground);
