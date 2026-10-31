@@ -30,7 +30,7 @@ index cc32d28..3a46bf4 100644
     * Returns the editor while this item is being edited. Partial diffs get an
     * editor after their files load; scrolling away or collapsing keeps it.
 diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
-index 140f94f..96fc774 100644
+index 140f94fe8480aa6b4ccbfca5573123442644a808..8c303344112ff572a9753e5681e732f44dea94af 100644
 --- a/dist/components/CodeView.js
 +++ b/dist/components/CodeView.js
 @@ -16,6 +16,7 @@ import { prefersReducedMotion } from "../utils/prefersReducedMotion.js";
@@ -50,7 +50,15 @@ index 140f94f..96fc774 100644
  const SCROLLING_CODE_OVERFLOW_FIX_VARIABLE = "--diffs-overflow-override";
  function createScrollRebaseConfig(containerHeight, triggerTop, targetTop) {
  	return {
-@@ -211,6 +214,8 @@ var CodeView = class CodeView {
+@@ -131,6 +134,7 @@ function assertEditorFactory(createEditor) {
+ }
+ const MOBILE_SAFARI = (() => {
+ 	const { navigator } = globalThis;
++	if (navigator == null) return false;
+ 	const userAgent = navigator.userAgent;
+ 	const isIOS = /iP(?:hone|ad|od)/.test(userAgent);
+ 	const isIPadOS = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+@@ -211,6 +215,8 @@ var CodeView = class CodeView {
  	isReadySubscription;
  	pendingHighlighterTheme;
  	isContainerManaged;
@@ -59,7 +67,7 @@ index 140f94f..96fc774 100644
  	constructor(options = { theme: DEFAULT_THEMES }, workerManager, isContainerManaged = false) {
  		this.options = options;
  		this.computeMetricsCache(options.itemMetrics);
-@@ -392,6 +397,7 @@ var CodeView = class CodeView {
+@@ -392,6 +398,7 @@ var CodeView = class CodeView {
  		this.root.addEventListener("touchstart", this.clearPendingScroll, { passive: true });
  		this.root.addEventListener("pointerdown", this.clearPendingScroll, { passive: true });
  		this.root.addEventListener("keydown", this.clearPendingScroll, { passive: true });
@@ -67,7 +75,7 @@ index 140f94f..96fc774 100644
  		this.resizeObserver.observe(this.root);
  		this.render(true);
  		window.__INSTANCE = this;
-@@ -464,6 +470,7 @@ var CodeView = class CodeView {
+@@ -464,6 +471,7 @@ var CodeView = class CodeView {
  		this.heightDirty = true;
  		this.resetRenderState();
  		if (!this.isContainerManaged) this.flushSlotCoordinator();
@@ -75,7 +83,7 @@ index 140f94f..96fc774 100644
  		if (failed) throw failure;
  	}
  	cleanUp() {
-@@ -485,6 +492,8 @@ var CodeView = class CodeView {
+@@ -485,6 +493,8 @@ var CodeView = class CodeView {
  		this.root?.removeEventListener("touchstart", this.clearPendingScroll);
  		this.root?.removeEventListener("pointerdown", this.clearPendingScroll);
  		this.root?.removeEventListener("keydown", this.clearPendingScroll);
@@ -84,7 +92,7 @@ index 140f94f..96fc774 100644
  		this.root?.style.removeProperty("overflow-anchor");
  		this.container?.remove();
  		this.stickyOffset.remove();
-@@ -626,6 +635,137 @@ var CodeView = class CodeView {
+@@ -626,6 +636,137 @@ var CodeView = class CodeView {
  	getItem(itemId) {
  		return this.idToItem.get(itemId)?.item;
  	}
@@ -222,7 +230,7 @@ index 140f94f..96fc774 100644
  	/**
  	* Returns the editor while this item is being edited. Partial diffs get an
  	* editor after their files load; scrolling away or collapsing keeps it.
-@@ -645,6 +785,7 @@ var CodeView = class CodeView {
+@@ -645,6 +786,7 @@ var CodeView = class CodeView {
  		this.render();
  		this.syncItemEditors();
  		this.syncSelection();
@@ -230,7 +238,7 @@ index 140f94f..96fc774 100644
  		return true;
  	}
  	updateItemId(oldId, newId) {
-@@ -678,6 +819,7 @@ var CodeView = class CodeView {
+@@ -678,6 +820,7 @@ var CodeView = class CodeView {
  		this.renamePendingScrollTarget(oldId, newId);
  		this.renamePendingLayoutAnchor(oldId, newId);
  		this.render();
@@ -238,7 +246,7 @@ index 140f94f..96fc774 100644
  		return true;
  	}
  	addItem(input) {
-@@ -687,6 +829,7 @@ var CodeView = class CodeView {
+@@ -687,6 +830,7 @@ var CodeView = class CodeView {
  		this.appendItemsInternal(inputs);
  		this.syncItemEditors();
  		this.syncSelection();
@@ -246,7 +254,7 @@ index 140f94f..96fc774 100644
  	}
  	removeItem(itemId) {
  		const item = this.idToItem.get(itemId);
-@@ -709,6 +852,7 @@ var CodeView = class CodeView {
+@@ -709,6 +853,7 @@ var CodeView = class CodeView {
  			for (const removedItem of removedItemsById?.values() ?? []) removedItem.instance.cleanUp();
  		}
  		this.syncSelection();
@@ -254,7 +262,7 @@ index 140f94f..96fc774 100644
  	}
  	/**
  	* Append new records to the viewer while preserving existing layout state.
-@@ -1330,6 +1474,10 @@ var CodeView = class CodeView {
+@@ -1330,6 +1475,10 @@ var CodeView = class CodeView {
  		item.item = nextItem;
  		item.version = nextItem.version;
  		item.renderedOptionsRevision = -1;
@@ -265,7 +273,7 @@ index 140f94f..96fc774 100644
  		return true;
  	}
  	getMaxScrollTopForHeight(scrollHeight) {
-@@ -1710,6 +1858,10 @@ var CodeView = class CodeView {
+@@ -1710,6 +1859,10 @@ var CodeView = class CodeView {
  		this.updateStickyPositioning();
  		this.validateStickyContainerHeight();
  		this.fixContainerFocus();
@@ -276,7 +284,7 @@ index 140f94f..96fc774 100644
  		if (fitPerfectly || this.scrollAnimation != null) this.render();
  	};
  	flushManagers(updatedItems) {
-@@ -1804,7 +1956,8 @@ var CodeView = class CodeView {
+@@ -1804,7 +1957,8 @@ var CodeView = class CodeView {
  		this.notifyScroll();
  		this.render();
  	};
@@ -286,7 +294,7 @@ index 140f94f..96fc774 100644
  		this.pendingScrollTarget = void 0;
  		this.pendingLayoutAnchor = void 0;
  		this.scrollAnimation = void 0;
-@@ -2066,7 +2219,12 @@ var CodeView = class CodeView {
+@@ -2066,7 +2220,12 @@ var CodeView = class CodeView {
  			const item = this.items[index];
  			if (item == null) throw new Error("CodeView.recomputeLayout: invalid item index");
  			item.top = runningTop;
@@ -300,7 +308,7 @@ index 140f94f..96fc774 100644
  			else item.height = item.instance.updateCodeViewLayout(item.item.file, runningTop, reset, item.item.annotations ?? []);
  			runningTop += item.height;
  			if (index < this.items.length - 1) runningTop += layout.gap;
-@@ -2086,6 +2244,27 @@ var CodeView = class CodeView {
+@@ -2086,6 +2245,27 @@ var CodeView = class CodeView {
  		return this.getLayout().gap + this.itemMetricsCache.diffHeaderHeight;
  	}
  };
