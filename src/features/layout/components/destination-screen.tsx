@@ -130,7 +130,8 @@ function DestinationBody({ tab, type }: { tab: Tab; type: DestinationType }) {
     case "spaces":
       return <SpacesTab convId={tab.data.convId as string} />;
     case "team-chat":
-      return <CommsPanel />;
+      // The full window: channels and people beside the conversation.
+      return <CommsPanel split />;
     default: {
       const _exhaustive: never = type;
       return _exhaustive;

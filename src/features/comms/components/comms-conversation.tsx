@@ -61,8 +61,12 @@ const TOP_FADE = 36;
 
 export const CommsConversation = memo(function CommsConversation({
   conv,
+  showBack = true,
 }: {
   conv: ChatConversation;
+  /** The header's "Back to chats". Off beside the split view's sidebar,
+   *  which is the way back. */
+  showBack?: boolean;
 }) {
   const me = useCommsStore.use.me();
   const memberList = useCommsStore.use.members();
@@ -278,7 +282,7 @@ export const CommsConversation = memo(function CommsConversation({
         me={me}
         pinnedCount={pinnedCount}
         onJumpToMessage={jumpToMessage}
-        onBack={actions.goHome}
+        onBack={showBack ? actions.goHome : undefined}
       />
 
       <SubTabStrip
@@ -529,7 +533,8 @@ function ConversationHeader({
   me: string;
   pinnedCount: number;
   onJumpToMessage: (id: string) => void;
-  onBack: () => void;
+  /** Absent: no back button (the split view's sidebar is the way back). */
+  onBack?: () => void;
 }) {
   const isChannel = conv.kind === "channel";
   const isGroup = conv.kind === "group_dm";
@@ -545,15 +550,17 @@ function ConversationHeader({
     // shoving the buttons off the edge.
     <div className="flex h-[38px] shrink-0 items-center gap-1 border-b border-border px-2">
       {/* Back to the tab's home view — the panel has no sidebar to fall back on. */}
-      <Hint label="Back to chats">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
-        >
-          <ChevronLeft size={15} />
-        </button>
-      </Hint>
+      {onBack ? (
+        <Hint label="Back to chats">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
+          >
+            <ChevronLeft size={15} />
+          </button>
+        </Hint>
+      ) : null}
 
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {isChannel ? (

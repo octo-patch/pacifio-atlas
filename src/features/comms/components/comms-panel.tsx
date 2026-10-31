@@ -14,19 +14,24 @@ import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { conversationTitle, memberName } from "../lib/derive";
+import { byRecency, conversationTitle, memberName } from "../lib/derive";
 import type { ChatConversation, OrgMemberProfile } from "../types";
 
 /**
- * Team chat, a surface tab (⌘⇧C, ADR-0024).
+ * Team chat, a surface tab and a destination (⌘⇧C, ADR-0024).
  *
- * Conversations open as tabs in a bar of their own rather than replacing one
- * another, because chat here is org-scoped and someone watching
- * #atlas-desktop while answering a DM is the ordinary case, not the
- * exception. The bar sits under the column's tab strip; the window's
- * controls are the column header's, not this panel's.
+ * As a surface — the short-hand view beside a session — conversations open as
+ * tabs in a bar of their own rather than replacing one another, because chat
+ * here is org-scoped and someone watching #atlas-desktop while answering a DM
+ * is the ordinary case, not the exception. The bar sits under the column's
+ * tab strip; the window's controls are the column header's, not this panel's.
+ *
+ * As the destination (`split`) it is the web app's layout: the channels and
+ * people as a sidebar on the left, the open conversation beside it, #general
+ * until something else is picked. The two forms share one store, so a
+ * conversation opened in one is the one the other shows.
  */
-export function CommsPanel() {
+export function CommsPanel({ split = false }: { split?: boolean } = {}) {
   const conversations = useCommsStore.use.conversations();
   const reads = useCommsStore.use.reads();
   const memberList = useCommsStore.use.members();
@@ -97,6 +102,23 @@ export function CommsPanel() {
     if (connected && socketOpen) void actions.hydrate();
   }, [connected, socketOpen, actions]);
 
+  // The split view always has a conversation open: #general when nothing is,
+  // else the first channel, else the most recent conversation. Picked once the
+  // list is here, and again if the open one goes away (left, deleted).
+  const defaultConvId = useMemo(() => {
+    if (!split) return null;
+    const channels = conversations.filter((c) => c.kind === "channel");
+    return (
+      channels.find((c) => c.name === "general")?.id ??
+      [...channels].sort(byRecency)[0]?.id ??
+      [...conversations].sort(byRecency)[0]?.id ??
+      null
+    );
+  }, [split, conversations]);
+  useEffect(() => {
+    if (split && !activeConv && defaultConvId) actions.openConversation(defaultConvId);
+  }, [split, activeConv, defaultConvId, actions]);
+
   useEffect(() => {
     const roster = remoteId ? rosterByOrg[remoteId] : undefined;
     if (!roster?.members) return;
@@ -162,6 +184,32 @@ export function CommsPanel() {
             <CommsSkeleton />
           )}
         </CommsSurface>
+      </div>
+    );
+  }
+
+  if (split) {
+    return (
+      <div className="flex h-full flex-col bg-background">
+        <CommsSurface>
+          <div className="relative flex min-h-0 flex-1 overflow-hidden">
+            <aside
+              aria-label="Channels and people"
+              className="flex w-72 shrink-0 flex-col border-r border-border"
+            >
+              <CommsHome sidebar activeConvId={activeConv?.id ?? null} />
+            </aside>
+            <div className="flex min-w-0 flex-1">
+              {activeConv ? (
+                // Keyed so each conversation mounts fresh.
+                <div key={activeConv.id} className="flex min-w-0 flex-1">
+                  <CommsConversation conv={activeConv} showBack={false} />
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </CommsSurface>
+        <MediaLightbox />
       </div>
     );
   }
