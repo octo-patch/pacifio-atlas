@@ -2212,10 +2212,10 @@ export function MessageInput({
               never wraps or runs past the edge. */}
           <div
             className={cn(
-              "grid transition-[grid-template-rows,padding] duration-base ease-out-strong motion-reduce:transition-none",
-              // Folded, the capsule gets room underneath to match the room
-              // above it, so it does not sit on the panel's bottom edge.
-              collapsed ? "grid-rows-[0fr] pb-3" : "grid-rows-[1fr] pb-0",
+              "grid transition-[grid-template-rows] duration-base ease-out-strong motion-reduce:transition-none",
+              // Folded, the capsule keeps the room under it the tray has open:
+              // the stack's own bottom padding, nothing added.
+              collapsed ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
             )}
           >
             <div className={cn("min-h-0", collapsed && "overflow-hidden")}>

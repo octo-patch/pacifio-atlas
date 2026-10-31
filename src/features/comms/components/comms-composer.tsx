@@ -345,7 +345,7 @@ export function CommsComposer({
 
   return (
     <div
-      className="relative shrink-0 px-2 pb-2 pt-1"
+      className="relative shrink-0 px-2 pb-4 pt-1"
       onFocus={() => setFocused(true)}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);

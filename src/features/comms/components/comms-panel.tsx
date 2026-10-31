@@ -190,9 +190,11 @@ export function CommsPanel({ split = false }: { split?: boolean } = {}) {
 
   if (split) {
     return (
+      // A rule along the top, under the window's bar, so the view starts
+      // where the bar ends.
       <div className="flex h-full flex-col bg-background">
         <CommsSurface>
-          <div className="relative flex min-h-0 flex-1 overflow-hidden">
+          <div className="relative flex min-h-0 flex-1 overflow-hidden border-t border-border">
             <aside
               aria-label="Channels and people"
               className="flex w-72 shrink-0 flex-col border-r border-border"

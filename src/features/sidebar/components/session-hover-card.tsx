@@ -71,7 +71,9 @@ function SessionHoverCardBody({
       <div className="min-w-0 truncate text-xs leading-tight font-medium text-foreground">
         {session.title}
       </div>
-      <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
+      {/* `minmax(0, 1fr)`: an `auto` column grows to a row's full text (a
+          pull request's title), past the card's width; this one truncates. */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5 pl-0.5 text-xs text-muted-foreground">
         <div className="flex min-w-0 items-center gap-2">
           <ProjectBadge
             name={session.projectName}

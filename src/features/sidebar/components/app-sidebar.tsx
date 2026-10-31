@@ -61,7 +61,10 @@ export function AppSidebar({ className }: { className?: string }) {
       <div {...drag} className="flex h-titlebar shrink-0 select-none items-center">
         <CornerCluster search />
       </div>
-      <div className="px-[8px]">
+      {/* Room under the corner (traffic lights, toggle, search), so the
+          picker reads as the start of the sidebar's content, not part of the
+          window's controls. */}
+      <div className="px-[8px] pt-[0.35rem]">
         <SidebarProjectPicker />
       </div>
       <div className="mb-2 mt-1">
@@ -101,7 +104,11 @@ function SidebarFoot() {
         <SourceControlButton iconOnly className="rounded-full" />
         <UsageButton iconOnly className="rounded-full" />
       </div>
-      <NotificationsButton iconOnly className="ml-auto" />
+      {/* The bell in a capsule of its own, the dock's glass, so the row reads
+          as two pieces of one set. */}
+      <div className="glass-rim ml-auto flex items-center rounded-full p-0.5">
+        <NotificationsButton iconOnly className="rounded-full" />
+      </div>
     </nav>
   );
 }

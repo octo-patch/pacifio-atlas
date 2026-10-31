@@ -202,7 +202,7 @@ function PullRequestMiniList({
 export function SessionPullRequestLines({ session }: { session: BadgeSession }) {
   if (session.pullRequests.length === 0) return null;
   return (
-    <div className="-mx-1.5">
+    <div className="-mx-1.5 min-w-0">
       <PullRequestMiniList
         pullRequests={session.pullRequests}
         onOpen={(link, external) => open(session, link, external)}

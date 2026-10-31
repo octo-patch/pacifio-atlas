@@ -151,6 +151,8 @@ export const NON_RUST = [
   ".github/workflows/release-linux.yml",
   "*.md",
   "LICENSE",
+  // The fundingjson.org manifest: project metadata, read by nothing in CI.
+  "funding.json",
   "package.json",
   "bun.lock",
   "bunfig.toml",

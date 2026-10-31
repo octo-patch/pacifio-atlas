@@ -558,247 +558,264 @@ export function SidebarSessions() {
         pendingRef={menuPendingRef}
       >
         <TooltipPrimitive.Provider delay={150} closeDelay={0} timeout={400}>
-          <div
-            ref={scrollerRef}
-            onKeyDown={onListKeyDown}
-            onScroll={noteSessionListScroll}
-            className="hide-scrollbar relative min-h-0 flex-1 overflow-y-auto px-2 pb-2"
-          >
-            {isSearching ? (
-              results.length === 0 ? (
-                <div className="px-2 py-6 text-center text-xs text-muted-foreground">
-                  No sessions match “{search.trim()}”.
-                </div>
-              ) : (
-                <ul
-                  id={SEARCH_RESULTS_ID}
-                  role="listbox"
-                  aria-label="Search results"
-                  className="flex flex-col"
-                >
-                  {results.map((session, index) => (
-                    <SessionSearchResultRow
-                      key={session.threadId}
-                      session={session}
-                      resultId={searchResultId(index)}
-                      isHighlighted={index === activeResultIndex}
-                      isActive={session.sessionId !== "" && session.sessionId === activeSessionId}
-                      onHighlight={(threadId) => {
-                        const i = resultsRef.current.findIndex((row) => row.threadId === threadId);
-                        if (i !== -1) setActiveResultIndex(i);
-                      }}
-                      onSelect={(row) => openSession(row)}
-                      onMenuTarget={handlers.menuTarget}
-                    />
-                  ))}
-                </ul>
-              )
-            ) : (
-              <>
-                <ul
-                  ref={pinnedBlockRef}
-                  aria-label="Pinned sessions"
-                  className={cn(
-                    "flex flex-col",
-                    showPinDropZone && pinned.length === 0 && "min-h-9",
-                  )}
-                >
-                  {showPinDropZone && pinned.length === 0 ? (
-                    <li
-                      className={cn(
-                        "flex h-9 list-none items-center justify-center rounded-md border border-dashed text-xs",
-                        drag?.pinnedIndex !== null
-                          ? "border-primary/40 bg-primary/5 text-primary"
-                          : "border-border text-muted-foreground",
-                      )}
-                    >
-                      Drop to pin
-                    </li>
-                  ) : null}
-                  {pinned.map((session) => (
-                    <SessionRow
-                      key={session.threadId}
-                      {...rowProps(session)}
-                      variant="card"
-                      isPinned
-                      dragOffset={offsets.get(session.threadId) ?? 0}
-                      isDragging={drag?.active === true && drag.threadId === session.threadId}
-                      dropVerb={
-                        drag?.active && drag.threadId === session.threadId ? dropVerb : null
-                      }
-                    />
-                  ))}
-                </ul>
-                {pinned.length > 0 && active.length > 0 ? (
-                  <div aria-hidden className="mx-2 my-1 h-px bg-border-subtle" />
-                ) : null}
-                <div
-                  ref={activeListRef}
-                  role="list"
-                  aria-label="Active sessions"
-                  style={{
-                    // Already net of scrollMargin (the virtualizer subtracts it).
-                    height: virtualizer.getTotalSize(),
-                    position: "relative",
-                  }}
-                >
-                  {virtualizer.getVirtualItems().map((item) => {
-                    const session = active[item.index];
-                    if (!session) return null;
-                    const dragging = drag?.active === true && drag.threadId === session.threadId;
-                    return (
-                      <ul
+          {/* The list's top edge, under the search row: a short fade from the
+              sidebar's colour, so rows scroll out under the header rather
+              than being cut by it — the footer dock's fade, mirrored. Over the
+              scroller, not in it, so it stays put while the rows move. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 z-panel h-4 bg-gradient-to-b from-sidebar to-transparent"
+            />
+            <div
+              ref={scrollerRef}
+              onKeyDown={onListKeyDown}
+              onScroll={noteSessionListScroll}
+              className="hide-scrollbar relative min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+            >
+              {isSearching ? (
+                results.length === 0 ? (
+                  <div className="px-2 py-6 text-center text-xs text-muted-foreground">
+                    No sessions match “{search.trim()}”.
+                  </div>
+                ) : (
+                  <ul
+                    id={SEARCH_RESULTS_ID}
+                    role="listbox"
+                    aria-label="Search results"
+                    className="flex flex-col"
+                  >
+                    {results.map((session, index) => (
+                      <SessionSearchResultRow
                         key={session.threadId}
-                        className="absolute top-0 left-0 w-full"
-                        style={{ transform: `translateY(${item.start - scrollMargin}px)` }}
-                      >
-                        <SessionRow
-                          {...rowProps(session)}
-                          variant="card"
-                          isPinned={false}
-                          dragOffset={dragging ? drag.dy : 0}
-                          isDragging={dragging}
-                          dropVerb={dragging ? dropVerb : null}
-                        />
-                      </ul>
-                    );
-                  })}
-                </div>
-                {snoozed.length > 0 ? (
-                  <div className="mt-2">
-                    <CollapsibleSectionHeader
-                      expanded={snoozedExpanded}
-                      tone="info"
-                      onClick={() => sidebarActions.setSnoozedExpanded(!snoozedExpanded)}
-                      data-testid="sidebar-snoozed-shelf-toggle"
-                    >
-                      {snoozedExpanded ? "Snoozed" : `Snoozed (${snoozed.length})`}
-                    </CollapsibleSectionHeader>
-                    <ul aria-label="Snoozed sessions" className="flex flex-col">
-                      {snoozedRows.map((session) => (
-                        <SessionRow
-                          key={session.threadId}
-                          {...rowProps(session)}
-                          variant="slim"
-                          isPinned={false}
-                          dragOffset={0}
-                          isDragging={false}
-                          dropVerb={null}
-                        />
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {settled.length > 0 ? (
-                  <div className="mt-2">
-                    <CollapsibleSectionHeader
-                      expanded={settledExpanded}
-                      onClick={() => sidebarActions.setSettledExpanded(!settledExpanded)}
-                      data-testid="sidebar-settled-shelf-toggle"
-                    >
-                      {settledExpanded ? "Settled" : `Settled (${settled.length})`}
-                    </CollapsibleSectionHeader>
-                    {settledExpanded ? (
-                      <label className="mx-0.5 mb-1 flex h-7 cursor-text items-center gap-2 rounded-md px-2 text-muted-foreground hover:bg-element-hover focus-within:bg-element-hover">
-                        <Search aria-hidden className="size-3 shrink-0" />
-                        <input
-                          type="search"
-                          value={settledSearch}
-                          onChange={(event) => sidebarActions.setSettledSearch(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape" && settledSearch) {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              sidebarActions.setSettledSearch("");
-                            }
-                          }}
-                          placeholder="Search settled"
-                          aria-label="Search settled sessions"
-                          className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
-                        />
-                        {settledSearch ? (
-                          <button
-                            type="button"
-                            aria-label="Clear settled search"
-                            onClick={() => sidebarActions.setSettledSearch("")}
-                            className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm hover:text-foreground"
-                          >
-                            <X aria-hidden className="size-3" />
-                          </button>
-                        ) : null}
-                      </label>
-                    ) : null}
-                    <ul aria-label="Settled sessions" className="flex flex-col">
-                      {shelfRows.map((session) => (
-                        <SessionRow
-                          key={session.threadId}
-                          {...rowProps(session)}
-                          variant="slim"
-                          isPinned={false}
-                          dragOffset={0}
-                          isDragging={false}
-                          dropVerb={null}
-                        />
-                      ))}
-                      {settledExpanded && deferredSettledSearch.trim() && shelfRows.length === 0 ? (
-                        <li className="list-none px-2.5 py-2 text-xs text-muted-foreground">
-                          No settled sessions match.
-                        </li>
-                      ) : null}
-                      {hiddenSettledCount > 0 ? (
-                        <li className="list-none">
-                          <button
-                            type="button"
-                            onClick={() => setSettledLimit((n) => n + SETTLED_SHELF_PAGE)}
-                            className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-muted-foreground hover:bg-element-hover hover:text-foreground"
-                          >
-                            <Plus aria-hidden className="size-4 shrink-0" />
-                            Show {Math.min(hiddenSettledCount, SETTLED_SHELF_PAGE)} more
-                          </button>
-                        </li>
-                      ) : null}
-                    </ul>
-                  </div>
-                ) : null}
-                {drag?.active && drag.from === "pinned" && drag.pinnedIndex === null ? (
-                  <SidebarSectionLabel tone="accent">Drop to unpin</SidebarSectionLabel>
-                ) : null}
-                {error && pinned.length + active.length + snoozed.length + settled.length === 0 ? (
-                  <div className="px-2 py-6 text-center text-xs text-error">
-                    Couldn't read session history: {error}
-                  </div>
-                ) : isEmpty ? (
-                  <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground">
-                    {projects.length === 0 ? (
-                      <>
-                        <span>No projects yet</span>
-                        <button
-                          type="button"
-                          onClick={() => void pickAndAddProject()}
-                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-2xs font-medium text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
-                        >
-                          <Plus aria-hidden className="-mx-0.5 size-3" />
-                          Add project
-                        </button>
-                      </>
-                    ) : scopedProject ? (
-                      `No sessions in ${scopedProject.name} yet`
-                    ) : (
-                      <>
-                        <span>No sessions yet</span>
-                        <button
-                          type="button"
-                          onClick={() => setImportOpen(true)}
-                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-2xs font-medium text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
-                        >
-                          Import sessions from agents…
-                        </button>
-                      </>
+                        session={session}
+                        resultId={searchResultId(index)}
+                        isHighlighted={index === activeResultIndex}
+                        isActive={session.sessionId !== "" && session.sessionId === activeSessionId}
+                        onHighlight={(threadId) => {
+                          const i = resultsRef.current.findIndex(
+                            (row) => row.threadId === threadId,
+                          );
+                          if (i !== -1) setActiveResultIndex(i);
+                        }}
+                        onSelect={(row) => openSession(row)}
+                        onMenuTarget={handlers.menuTarget}
+                      />
+                    ))}
+                  </ul>
+                )
+              ) : (
+                <>
+                  <ul
+                    ref={pinnedBlockRef}
+                    aria-label="Pinned sessions"
+                    className={cn(
+                      "flex flex-col",
+                      showPinDropZone && pinned.length === 0 && "min-h-9",
                     )}
+                  >
+                    {showPinDropZone && pinned.length === 0 ? (
+                      <li
+                        className={cn(
+                          "flex h-9 list-none items-center justify-center rounded-md border border-dashed text-xs",
+                          drag?.pinnedIndex !== null
+                            ? "border-primary/40 bg-primary/5 text-primary"
+                            : "border-border text-muted-foreground",
+                        )}
+                      >
+                        Drop to pin
+                      </li>
+                    ) : null}
+                    {pinned.map((session) => (
+                      <SessionRow
+                        key={session.threadId}
+                        {...rowProps(session)}
+                        variant="card"
+                        isPinned
+                        dragOffset={offsets.get(session.threadId) ?? 0}
+                        isDragging={drag?.active === true && drag.threadId === session.threadId}
+                        dropVerb={
+                          drag?.active && drag.threadId === session.threadId ? dropVerb : null
+                        }
+                      />
+                    ))}
+                  </ul>
+                  {pinned.length > 0 && active.length > 0 ? (
+                    <div aria-hidden className="mx-2 my-1 h-px bg-border-subtle" />
+                  ) : null}
+                  <div
+                    ref={activeListRef}
+                    role="list"
+                    aria-label="Active sessions"
+                    style={{
+                      // Already net of scrollMargin (the virtualizer subtracts it).
+                      height: virtualizer.getTotalSize(),
+                      position: "relative",
+                    }}
+                  >
+                    {virtualizer.getVirtualItems().map((item) => {
+                      const session = active[item.index];
+                      if (!session) return null;
+                      const dragging = drag?.active === true && drag.threadId === session.threadId;
+                      return (
+                        <ul
+                          key={session.threadId}
+                          className="absolute top-0 left-0 w-full"
+                          style={{ transform: `translateY(${item.start - scrollMargin}px)` }}
+                        >
+                          <SessionRow
+                            {...rowProps(session)}
+                            variant="card"
+                            isPinned={false}
+                            dragOffset={dragging ? drag.dy : 0}
+                            isDragging={dragging}
+                            dropVerb={dragging ? dropVerb : null}
+                          />
+                        </ul>
+                      );
+                    })}
                   </div>
-                ) : null}
-              </>
-            )}
+                  {snoozed.length > 0 ? (
+                    <div className="mt-2">
+                      <CollapsibleSectionHeader
+                        expanded={snoozedExpanded}
+                        tone="info"
+                        onClick={() => sidebarActions.setSnoozedExpanded(!snoozedExpanded)}
+                        data-testid="sidebar-snoozed-shelf-toggle"
+                      >
+                        {snoozedExpanded ? "Snoozed" : `Snoozed (${snoozed.length})`}
+                      </CollapsibleSectionHeader>
+                      <ul aria-label="Snoozed sessions" className="flex flex-col">
+                        {snoozedRows.map((session) => (
+                          <SessionRow
+                            key={session.threadId}
+                            {...rowProps(session)}
+                            variant="slim"
+                            isPinned={false}
+                            dragOffset={0}
+                            isDragging={false}
+                            dropVerb={null}
+                          />
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {settled.length > 0 ? (
+                    <div className="mt-2">
+                      <CollapsibleSectionHeader
+                        expanded={settledExpanded}
+                        onClick={() => sidebarActions.setSettledExpanded(!settledExpanded)}
+                        data-testid="sidebar-settled-shelf-toggle"
+                      >
+                        {settledExpanded ? "Settled" : `Settled (${settled.length})`}
+                      </CollapsibleSectionHeader>
+                      {settledExpanded ? (
+                        <label className="mx-0.5 mb-1 flex h-7 cursor-text items-center gap-2 rounded-md px-2 text-muted-foreground hover:bg-element-hover focus-within:bg-element-hover">
+                          <Search aria-hidden className="size-3 shrink-0" />
+                          <input
+                            type="search"
+                            value={settledSearch}
+                            onChange={(event) =>
+                              sidebarActions.setSettledSearch(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape" && settledSearch) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                sidebarActions.setSettledSearch("");
+                              }
+                            }}
+                            placeholder="Search settled"
+                            aria-label="Search settled sessions"
+                            className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+                          />
+                          {settledSearch ? (
+                            <button
+                              type="button"
+                              aria-label="Clear settled search"
+                              onClick={() => sidebarActions.setSettledSearch("")}
+                              className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm hover:text-foreground"
+                            >
+                              <X aria-hidden className="size-3" />
+                            </button>
+                          ) : null}
+                        </label>
+                      ) : null}
+                      <ul aria-label="Settled sessions" className="flex flex-col">
+                        {shelfRows.map((session) => (
+                          <SessionRow
+                            key={session.threadId}
+                            {...rowProps(session)}
+                            variant="slim"
+                            isPinned={false}
+                            dragOffset={0}
+                            isDragging={false}
+                            dropVerb={null}
+                          />
+                        ))}
+                        {settledExpanded &&
+                        deferredSettledSearch.trim() &&
+                        shelfRows.length === 0 ? (
+                          <li className="list-none px-2.5 py-2 text-xs text-muted-foreground">
+                            No settled sessions match.
+                          </li>
+                        ) : null}
+                        {hiddenSettledCount > 0 ? (
+                          <li className="list-none">
+                            <button
+                              type="button"
+                              onClick={() => setSettledLimit((n) => n + SETTLED_SHELF_PAGE)}
+                              className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-muted-foreground hover:bg-element-hover hover:text-foreground"
+                            >
+                              <Plus aria-hidden className="size-4 shrink-0" />
+                              Show {Math.min(hiddenSettledCount, SETTLED_SHELF_PAGE)} more
+                            </button>
+                          </li>
+                        ) : null}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {drag?.active && drag.from === "pinned" && drag.pinnedIndex === null ? (
+                    <SidebarSectionLabel tone="accent">Drop to unpin</SidebarSectionLabel>
+                  ) : null}
+                  {error &&
+                  pinned.length + active.length + snoozed.length + settled.length === 0 ? (
+                    <div className="px-2 py-6 text-center text-xs text-error">
+                      Couldn't read session history: {error}
+                    </div>
+                  ) : isEmpty ? (
+                    <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground">
+                      {projects.length === 0 ? (
+                        <>
+                          <span>No projects yet</span>
+                          <button
+                            type="button"
+                            onClick={() => void pickAndAddProject()}
+                            className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-2xs font-medium text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
+                          >
+                            <Plus aria-hidden className="-mx-0.5 size-3" />
+                            Add project
+                          </button>
+                        </>
+                      ) : scopedProject ? (
+                        `No sessions in ${scopedProject.name} yet`
+                      ) : (
+                        <>
+                          <span>No sessions yet</span>
+                          <button
+                            type="button"
+                            onClick={() => setImportOpen(true)}
+                            className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-2xs font-medium text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
+                          >
+                            Import sessions from agents…
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
           </div>
         </TooltipPrimitive.Provider>
       </SessionRowMenu>

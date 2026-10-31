@@ -219,20 +219,30 @@ export function CornerCluster({ search = false }: { search?: boolean } = {}) {
     <div
       className={cn(
         "flex shrink-0 items-center gap-1",
-        inset ? "pl-[calc(78px/var(--ui-zoom,1))]" : "pl-2",
+        // In the sidebar's corner, the sidebar's own 8px inset (its rows'
+        // `px-[8px]`) on both sides, so the corner's icons line up with the
+        // rows' below; elsewhere the bar's.
+        inset ? "pl-[calc(78px/var(--ui-zoom,1))]" : search ? "pl-[8px]" : "pl-2",
         // The sidebar's corner spans the sidebar, so search can sit at its
-        // far end.
-        search && "min-w-0 flex-1 pr-2",
+        // far end — over the picker row's round `+`, the same 24px square.
+        search && "min-w-0 flex-1 pr-[8px]",
       )}
     >
       <DevBadge className="mr-1" />
       {/* Windows and Linux: the menus macOS shows in the system menu bar. */}
       {!isMac && <MenuBar className="mr-1" />}
       <HintGroup>
-        <SidebarToggle />
-        {/* Beside the toggle while the traffic lights take the corner's
-            start; with the lights gone (fullscreen, or Windows and Linux) the
-            toggle holds the start and search the far end. */}
+        {/* With no traffic lights to follow, the toggle takes the rows' own
+            padding (`px-2`), so its glyph starts where theirs do. */}
+        {/* With the traffic lights showing, the toggle and search sit
+            together at the sidebar's right end, clear of the lights. */}
+        <SidebarToggle
+          flush={search && !inset}
+          className={search && inset ? "ml-auto" : undefined}
+        />
+        {/* Beside the toggle at the right end while the traffic lights take
+            the corner's start; with the lights gone (fullscreen, or Windows
+            and Linux) the toggle holds the start and search the far end. */}
         {search && <PaletteSearchButton className={inset ? undefined : "ml-auto"} />}
       </HintGroup>
     </div>
@@ -615,14 +625,14 @@ export function DevBadge({ className }: { className?: string }) {
 
 /** Docks or hides the sidebar. While it is hidden, resting on the toggle
  *  peeks it (`sidebar-peek.ts`); a click then docks it. */
-function SidebarToggle() {
+function SidebarToggle({ flush = false, className }: { flush?: boolean; className?: string } = {}) {
   const hint = useActionShortcut("workspace.toggleSidebar")?.label;
   const sidebarOpen = useProjectStore.use.sidebarOpen();
   const { toggleSidebar } = useProjectStore.use.actions();
   const label = sidebarOpen ? "Hide sidebar" : "Show sidebar";
 
   return (
-    <HintItem label={hint ? `${label} (${hint})` : label}>
+    <HintItem label={hint ? `${label} (${hint})` : label} className={className}>
       <button
         onClick={() => {
           endPeek();
@@ -633,7 +643,8 @@ function SidebarToggle() {
         aria-label={label}
         aria-pressed={sidebarOpen}
         className={cn(
-          "flex size-6 items-center justify-center rounded-md transition-colors duration-150 hover:bg-element-hover",
+          "flex items-center justify-center rounded-md transition-colors duration-150 hover:bg-element-hover",
+          flush ? "h-6 px-2" : "size-6",
           sidebarOpen ? "text-foreground" : "text-muted-foreground hover:text-secondary-foreground",
         )}
       >
