@@ -1303,6 +1303,79 @@
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
+  /* The chat welcome's backdrop: a radial glow falling from the top edge.
+     It replaced a canvas dither field that repainted tens of thousands of
+     glyphs at 12fps; this is one static paint. No grain over it — a noise
+     layer visibly degraded the gradient.
+
+     The hue is one of a palette per appearance, picked fresh each time the
+     screen mounts (`data-palette`, chosen in `welcome-glow.tsx`). Each hue is
+     mixed into the theme's own `--background`, so the glow belongs to
+     whichever theme is active rather than sitting on it. Dark palettes are
+     deep and low-chroma, light palettes are pastels, and both fade to the
+     plain background well before the composer. */
+  .atlas-welcome-glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    /* Narrower than the panel, so the glow peaks behind the middle of the
+       floating title bar and has already fallen off by the corners, where the
+       bar's breadcrumb and buttons sit. */
+    background-image: radial-gradient(
+      ellipse 80% 99% at 50% -22%,
+      color-mix(in oklab, var(--welcome-hue) 78%, var(--background)) 0%,
+      color-mix(in oklab, var(--welcome-hue) 35.5%, var(--background)) 45%,
+      var(--background) 75%
+    );
+  }
+  /* The session column's title bar floats over the glow (see
+     `pane-top-inset.ts`), and its quiet greys — tuned for plain background —
+     sink into a coloured one. While the glow is on screen, the bar's muted and
+     disabled tones become the theme's foreground at an alpha instead: about
+     as quiet, but tinted by whatever is behind them, so they sit in the
+     palette rather than going muddy against it. `data-atlas-offstage` marks a
+     hidden (still mounted) chat, whose glow must not restyle the bar. */
+  [data-session-column]:has(.atlas-welcome-glow:not([data-atlas-offstage] *)) > [data-pane-header] {
+    --muted-foreground: color-mix(in oklab, var(--foreground) 62%, transparent);
+    --atlas-text-disabled: color-mix(in oklab, var(--foreground) 40%, transparent);
+  }
+  .atlas-welcome-glow[data-palette="ember"] {
+    --welcome-hue: #a3281c;
+  }
+  .atlas-welcome-glow[data-palette="plum"] {
+    --welcome-hue: #6c2a92;
+  }
+  .atlas-welcome-glow[data-palette="ocean"] {
+    --welcome-hue: #1f50a3;
+  }
+  .atlas-welcome-glow[data-palette="moss"] {
+    --welcome-hue: #2e6c3e;
+  }
+  .atlas-welcome-glow[data-palette="amber"] {
+    --welcome-hue: #9e6014;
+  }
+  .atlas-welcome-glow[data-palette="teal"] {
+    --welcome-hue: #116a6e;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="ember"] {
+    --welcome-hue: #f7b9a4;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="plum"] {
+    --welcome-hue: #dcc4f4;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="ocean"] {
+    --welcome-hue: #b9d4f6;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="moss"] {
+    --welcome-hue: #c4e6cc;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="amber"] {
+    --welcome-hue: #f6dca2;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="teal"] {
+    --welcome-hue: #b4e2df;
+  }
+
   /* macOS-native overlay scrollbars.
 
      The thumb is the theme's `scrollbar.thumb.background` / `.hover`. Those two

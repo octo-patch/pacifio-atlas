@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
  * `atlas:theme-applied` event that `applyTheme` dispatches:
  *
  *   `onThemeApplied(cb)`   imperative owners (xterm, the two pixi scenes)
- *   `useThemeVersion()`    React (recharts, mermaid, the dither field)
+ *   `useThemeVersion()`    React (recharts, mermaid)
  *   a raw `window.addEventListener(THEME_APPLIED_EVENT, …)` (CodeMirror,
  *                          which reconfigures a compartment rather than
  *                          re-rendering)

@@ -15,6 +15,7 @@ import { IconButton } from "@/ui/icon-button";
 import { PaneHeader } from "@/components/titlebar";
 import { BreadcrumbSeparator } from "@/components/breadcrumb-button";
 import { columnChrome } from "../lib/shell-edges";
+import { PaneTopInsetContext } from "../lib/pane-top-inset";
 import { OPEN_SURFACE_MENU_EVENT, SURFACES, openSurface, surfaceForKey } from "../lib/surfaces";
 import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { useLayoutStore, type Tab, type ProjectView } from "../stores/layout-store";
@@ -465,18 +466,28 @@ const TabColumn = memo(function TabColumn({
   // draws a strip. Sessions switch from the sidebar; everything else opens in
   // the surfaces pane, whose strip this is.
   const showStrip = !main;
+  // The session column's header floats over the transcript (see
+  // `pane-top-inset.ts`); how tall it is, for what has to clear it.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const topInset = useFloatingHeaderHeight(headerRef, main);
 
   return (
     <div
-      className="h-full flex flex-col overflow-hidden bg-background"
+      data-session-column={main || undefined}
+      className="relative h-full flex flex-col overflow-hidden bg-background"
       onMouseDownCapture={() => setFocusedGroup(groupId)}
     >
       {/* The column's header, and this column's slice of the window bar: the
-          outermost columns carry the window's own controls. */}
+          outermost columns carry the window's own controls. In the session
+          column it floats, transparent, over the content: the transcript
+          scrolls under it and dissolves into the transcript's progressive
+          blur instead of being cut off by an opaque strip. */}
       <PaneHeader
+        ref={headerRef}
         leading={chrome.leading}
         breadcrumb={main && chrome.breadcrumb}
         trailing={chrome.trailing}
+        className={main ? "absolute inset-x-0 top-0 z-titlebar" : undefined}
       >
         {main && chrome.breadcrumb && !showStrip && activeTab && namedInWindowBar(activeTab) && (
           <>
@@ -518,15 +529,36 @@ const TabColumn = memo(function TabColumn({
         </HintGroup>
       </PaneHeader>
 
-      <TabContentContainer
-        groupId={groupId}
-        view={view}
-        isActive={isActive}
-        projectId={projectId}
-      />
+      <PaneTopInsetContext.Provider value={topInset}>
+        <TabContentContainer
+          groupId={groupId}
+          view={view}
+          isActive={isActive}
+          projectId={projectId}
+        />
+      </PaneTopInsetContext.Provider>
     </div>
   );
 });
+
+/** The floating header's height, tracked as the interface zoom changes it. 0
+ *  while the header is an ordinary row. */
+function useFloatingHeaderHeight(ref: React.RefObject<HTMLDivElement | null>, floating: boolean) {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!floating || !el) {
+      setHeight(0);
+      return;
+    }
+    const measure = () => setHeight(Math.round(el.getBoundingClientRect().height));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, floating]);
+  return height;
+}
 
 /** Whether the window bar names the main pane's tab after the project. An
  *  editor tab doesn't: its breadcrumb row already ends at the file, with its

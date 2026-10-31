@@ -14,6 +14,7 @@
 import { lazy, Suspense, useEffect, useRef } from "react";
 
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
 import {
   selectDockedOpen,
   useSessionDetailsStore,
@@ -41,6 +42,7 @@ export function SessionDockLane({
   docked: boolean;
 }) {
   const open = useSessionDetailsStore((s) => docked && selectDockedOpen(s, scope));
+  const topInset = usePaneTopInset();
   const laneRef = useRef<HTMLDivElement>(null);
   const laneHeight = useElementHeight(laneRef, open);
   useDetailsEscape(tabId, scope, open);
@@ -55,7 +57,12 @@ export function SessionDockLane({
       className="pointer-events-none absolute z-panel flex flex-col items-end"
       // Right inset from `CONTEXT_CARD_GAP`, the gap the panel's reservation
       // is computed with, so the card lands where the room was left for it.
-      style={{ top: DETAILS_CARD_GAP, bottom: DETAILS_CARD_GAP, right: CONTEXT_CARD_GAP }}
+      // The top clears the window bar, which floats over the panel.
+      style={{
+        top: topInset + DETAILS_CARD_GAP,
+        bottom: DETAILS_CARD_GAP,
+        right: CONTEXT_CARD_GAP,
+      }}
     >
       {open && (
         // No entrance: docked, the card is a panel the toggle shows, and the

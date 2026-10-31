@@ -134,6 +134,7 @@ export function useWindowDrag() {
  * Every stretch of it drags the window.
  */
 export function PaneHeader({
+  ref,
   leading,
   breadcrumb,
   trailing,
@@ -141,6 +142,7 @@ export function PaneHeader({
   className,
   children,
 }: {
+  ref?: React.Ref<HTMLDivElement>;
   leading?: boolean;
   /** Whether `org / project` shows: inside the leading cluster when `leading`
    *  (default on), or alone at the start of the header when not. */
@@ -155,6 +157,8 @@ export function PaneHeader({
   const drag = useWindowDrag();
   return (
     <div
+      ref={ref}
+      data-pane-header
       {...drag}
       className={cn(
         "relative flex min-w-0 shrink-0 select-none items-center gap-1",

@@ -174,8 +174,9 @@ import { requestModelPicker } from "../lib/model-picker-events";
 // module header for why that's a perf decision as much as a UX one.
 const DetailPanel = lazy(() => import("./detail-panel").then((m) => ({ default: m.DetailPanel })));
 import { Sparkles, Search, ChevronDown, ArrowRight, GitCompare, FlaskConical } from "lucide-react";
-import { AtlasIcon } from "@/components/atlas-icon";
-import { DitherField } from "@/ui/dither-field";
+import { WelcomeGlow } from "./welcome-glow";
+import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
+import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { logEvent } from "@/features/log/lib/log";
 import { cn } from "@/lib/utils";
@@ -388,6 +389,8 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   // the transcript). Transcript publishes the "scrolled up" bit via
   // `onShowJumpChange` and exposes `scrollToBottom` via its ref.
   const messagesListRef = useRef<TranscriptHandle>(null);
+  // The window bar floats over this panel; the transcript scrolls under it.
+  const topInset = usePaneTopInset();
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [jumpCount, setJumpCount] = useState(0);
   // Stable so the transcript's `[showJump, newCount, onShowJumpChange]`
@@ -1589,6 +1592,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
                     turnInProgress={isBusyAgentStatus(session.status)}
                     agentType={session.agentType}
                     onShowJumpChange={onShowJumpChange}
+                    topInset={topInset}
                     workingLabel={
                       session.pendingSend
                         ? (startingStatus ?? `Starting ${agentMeta(session.agentType).label}`)
@@ -1882,6 +1886,10 @@ const WELCOME_SUGGESTIONS = [
 ] as const;
 
 function WelcomeState() {
+  const snapshot = useAuthStore.use.snapshot();
+  const firstName =
+    snapshot.status === "signed-in" ? snapshot.user?.name.trim().split(/\s+/)[0] : undefined;
+  const greeting = firstName ? `Hi, ${firstName} 👋` : "Welcome back 👋";
   return (
     // No entrance animations here, deliberately. Every `atlas-fade-in` element
     // is `animation-fill-mode: both`, and a filled accelerated opacity
@@ -1891,47 +1899,15 @@ function WelcomeState() {
     // when the wrapper turned `visibility:hidden` — so the suggestion cards kept
     // painting on top of the tab you had just switched to.
     <div className="relative h-full flex items-center justify-center overflow-hidden px-6">
-      {/* The landing hero's ASCII cloud field, hollowed under the copy and
-          faded out at the edges so it never reaches the header or the
-          composer. Behind everything: the content stacks on `relative`. */}
-      <DitherField
-        mode="glyphs"
-        // +40%: the radial mask below mattes the field against the panel, so
-        // at the landing's own alpha it reads far fainter here than it does
-        // there. The mask also holds full weight further out now — it used to
-        // start dissolving at 30% of the ellipse, which dimmed the field
-        // exactly where the hollow had just made it dense.
-        ink={1.4}
-        className="[mask-image:radial-gradient(ellipse_70%_60%_at_50%_45%,#000_55%,transparent_100%)]"
-      />
-      <div className="relative w-full max-w-[440px] flex flex-col items-center text-center">
-        {/* Hero: the Atlas mark on black. It used to sit on a 260px accent
-            radial gradient; on AMOLED black that halo read as a smudge behind
-            the mark rather than a light source, and it competed with the
-            dither field's own centre. The ring and the drop shadow are what
-            separate the mark from the panel.
-
-            The radius is a PERCENTAGE so the ring follows the artwork's own
-            corner (rx 166 on a 600 viewBox ≈ 28%) at any size; a scale step
-            is tighter than that corner and left background wedges showing
-            inside the ring. The shadow is a soft, negatively-spread halo
-            under the mark, which no elevation step is — `shadow-lg` is the
-            dialog stack and read as a slab. */}
-        <AtlasIcon
-          size={60}
-          // ratchet-allow: the radius tracks the artwork's own corner, and the halo is not an elevation
-          className="mb-5 rounded-[28%] ring-1 ring-[var(--atlas-element-active)] shadow-[0_12px_50px_-12px_rgba(0,0,0,0.85)]"
-        />
-
+      <WelcomeGlow />
+      <div className="relative w-full max-w-[440px] flex flex-col items-start">
+        <p className="text-lg text-[var(--muted-foreground)]">{greeting}</p>
         {/* ratchet-allow: the one-off welcome headline sits between text-xl (20px) and text-2xl (24px) */}
-        <h2 className="bg-gradient-to-b from-foreground to-foreground/55 bg-clip-text text-[22px] font-semibold tracking-tight text-transparent">
-          Atlas
+        <h2 className="mt-1 text-[22px] font-semibold tracking-tight text-[var(--foreground)]">
+          What are we building?
         </h2>
-        <p className="mt-1.5 text-base text-[var(--muted-foreground)]">
-          Code with Agents. Tools, plans, and edits all live.
-        </p>
 
-        <div className="mt-7 grid w-full grid-cols-2 gap-2.5">
+        <div className="mt-6 grid w-full grid-cols-2 gap-2.5">
           {WELCOME_SUGGESTIONS.map(({ text, Icon }) => (
             <button
               key={text}
