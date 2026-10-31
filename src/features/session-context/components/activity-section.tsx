@@ -7,7 +7,7 @@
 // tree, opens them. As a popover the card closes on a pick: it sits over the
 // transcript's top-right, where the panel opens. Docked, it stays.
 
-import { ClipboardList, TerminalSquare, type LucideIcon } from "lucide-react";
+import { Activity, ClipboardList, TerminalSquare, type LucideIcon } from "lucide-react";
 
 import {
   useSessionSidePanel,
@@ -41,7 +41,7 @@ export function ActivitySection({
     toggle(tabId, panel);
   };
   return (
-    <DetailsSection label="Activity" title="Activity">
+    <DetailsSection label="Activity" title="Activity" icon={Activity}>
       {ROWS.map(({ panel, label, icon }) => (
         <DetailsRow
           key={panel}

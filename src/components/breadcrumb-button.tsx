@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Icon } from "@/ui/icon";
 
 /**
  * One segment of the top bar's `org / project` breadcrumb.
@@ -42,4 +43,9 @@ export function BreadcrumbButton({
       />
     </button>
   );
+}
+
+/** The mark between breadcrumb segments: a chevron, with room either side. */
+export function BreadcrumbSeparator() {
+  return <Icon icon={ChevronRight} size="sm" aria-hidden className="mx-1 shrink-0 text-disabled" />;
 }

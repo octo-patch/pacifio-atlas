@@ -64,6 +64,7 @@ export function LineageSection({
   return (
     <DetailsSection
       label="Lineage"
+      icon={GitFork}
       // The child agents' running count while any runs: the figure that
       // changes while you watch.
       title={running > 0 ? `Lineage · ${running} running` : "Lineage"}

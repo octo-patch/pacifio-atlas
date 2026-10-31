@@ -45,7 +45,7 @@ import { isDev } from "@/lib/env";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
 import { MenuBar } from "@/features/menu/components/menu-bar";
 import { OrgSwitcher } from "@/features/organisations/components/org-switcher";
-import { BreadcrumbButton } from "./breadcrumb-button";
+import { BreadcrumbButton, BreadcrumbSeparator } from "./breadcrumb-button";
 import { OPEN_CAPTURE_EVENT } from "@/features/capture/lib/open-capture";
 import { RightPanelToggle } from "@/features/layout/components/right-panel-toggle";
 import { AccountButton } from "@/features/auth/components/account-button";
@@ -319,7 +319,10 @@ function TopbarTrailing() {
     <div
       data-window-controls
       className={cn(
-        "ml-auto flex shrink-0 items-center gap-0.5",
+        // `gap-1`, the bar's own gap: the session's Details button sits that
+        // far left of this group, so its icons and the group's read as one
+        // evenly spaced row.
+        "ml-auto flex shrink-0 items-center gap-1",
         !(isWindows || isLinux) && "pr-2",
       )}
     >
@@ -496,7 +499,7 @@ function ProjectLabel({
 
   return (
     <div ref={rootRef} className="relative flex min-w-0 shrink items-center">
-      {/* Breadcrumb: `org / project`, two controls. The org opens the org
+      {/* Breadcrumb: `org › project`, two controls. The org opens the org
           switcher — the same menu as the sidebar picker's Organization submenu. The project opens
           capture setup: capture is per project, and this is the one control in
           the app that always names the project it would apply to — which the
@@ -505,7 +508,7 @@ function ProjectLabel({
       {orgName && (
         <>
           <OrgSwitcher />
-          <span className="shrink-0 px-0.5 text-sm text-muted-foreground opacity-60">/</span>
+          <BreadcrumbSeparator />
         </>
       )}
       {!path ? (

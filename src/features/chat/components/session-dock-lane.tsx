@@ -1,10 +1,10 @@
 // The chat panel's dock lane: the room at its top-right that the panel keeps
-// for the docked Details card whether or not it shows (`context-dock.ts`).
+// for the docked Details card while it shows (`context-dock.ts`).
 //
 // The lane is an absolute layer over the transcript area: it starts a gap
-// below the title bar, ends a gap above the composer, and never takes layout
-// space, so opening or closing the card moves neither the transcript nor the
-// composer. A card taller than the lane first sheds rows it can do
+// below the title bar, ends a gap above the composer, and takes no layout
+// space itself — the room beside the column is the chat panel's padding,
+// kept while the card is open. A card taller than the lane first sheds rows it can do
 // without (`details-density.ts`), then scrolls inside itself.
 //
 // A component of its own so the open flag it reads re-renders this and
@@ -20,6 +20,7 @@ import {
 } from "@/features/session-context/stores/session-details-store";
 
 import { DETAILS_CARD_GAP } from "@/features/session-context/lib/details-density";
+import { CONTEXT_CARD_GAP } from "@/features/session-context/lib/context-dock";
 import { useElementHeight } from "../lib/use-element-height";
 
 const SessionDetailsCard = lazy(() =>
@@ -51,8 +52,10 @@ export function SessionDockLane({
       data-session-dock-lane
       // `pointer-events-none`: the lane is mostly empty air over the
       // transcript's gutter; only the card in it takes the pointer.
-      className="pointer-events-none absolute right-3 z-panel flex flex-col items-end"
-      style={{ top: DETAILS_CARD_GAP, bottom: DETAILS_CARD_GAP }}
+      className="pointer-events-none absolute z-panel flex flex-col items-end"
+      // Right inset from `CONTEXT_CARD_GAP`, the gap the panel's reservation
+      // is computed with, so the card lands where the room was left for it.
+      style={{ top: DETAILS_CARD_GAP, bottom: DETAILS_CARD_GAP, right: CONTEXT_CARD_GAP }}
     >
       {open && (
         // No entrance: docked, the card is a panel the toggle shows, and the

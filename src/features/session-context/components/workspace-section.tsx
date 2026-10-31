@@ -12,7 +12,7 @@
 //  - Project scripts (`ProjectScriptsRow`).
 
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Folder, FolderGit2, FolderOpen, Laptop } from "lucide-react";
+import { Check, Copy, FolderOpen, Laptop } from "lucide-react";
 
 import { EditorIcon } from "@/features/external-editor/components/editor-icons";
 import { SYSTEM_EDITOR_ID } from "@/features/external-editor/lib/external-editor-api";
@@ -76,10 +76,8 @@ function EnvironmentRow({ projectPath, workPath }: { projectPath: string; workPa
     <ContextMenu>
       <ContextMenuTrigger render={<div className="contents" />}>
         <DetailsRow title={`${environment?.name || "This device"} · ${where}\n${workPath}`}>
-          <span className="flex shrink-0 items-center gap-1">
-            <RowIcon icon={Laptop} />
-            <RowIcon icon={worktree ? FolderGit2 : Folder} />
-          </span>
+          {/* One glyph: the device. Checkout vs worktree is in the tooltip. */}
+          <RowIcon icon={Laptop} />
           <RowLabel>{environment?.name || "This device"}</RowLabel>
         </DetailsRow>
       </ContextMenuTrigger>

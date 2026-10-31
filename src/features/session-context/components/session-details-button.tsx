@@ -15,7 +15,7 @@
 
 import { lazy, Suspense, useEffect, type RefObject } from "react";
 import { Popover } from "@base-ui/react/popover";
-import { SquareMenu } from "lucide-react";
+import { SquareDashedMousePointer } from "lucide-react";
 
 import { useElementHeight } from "@/features/chat/lib/use-element-height";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
@@ -107,7 +107,7 @@ function DockToggle({ scope }: { scope: string }) {
   return (
     <HintItem label={DETAILS_LABEL}>
       <IconButton
-        icon={SquareMenu}
+        icon={SquareDashedMousePointer}
         label={DETAILS_LABEL}
         size="sm"
         iconSize="md"
@@ -150,7 +150,7 @@ function DetailsPopover({
           onPointerEnter={() => void loadCard()}
           render={
             <IconButton
-              icon={SquareMenu}
+              icon={SquareDashedMousePointer}
               label={DETAILS_LABEL}
               size="sm"
               iconSize="md"

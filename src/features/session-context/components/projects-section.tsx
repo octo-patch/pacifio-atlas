@@ -25,6 +25,7 @@ import {
   FolderGit2,
   FolderOpen,
   FolderPlus,
+  Folders,
   Info,
   Pencil,
   Plus,
@@ -100,7 +101,7 @@ export function ProjectsSection({ tabId, projectPath }: { tabId: string; project
   };
 
   return (
-    <DetailsSection label="Projects" title="Projects">
+    <DetailsSection label="Projects" title="Projects" icon={Folders}>
       <DetailsRow title={projectPath}>
         <RowIcon icon={Folder} />
         <RowLabel>{mainName ?? basename(projectPath)}</RowLabel>

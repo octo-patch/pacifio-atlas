@@ -69,10 +69,10 @@ export function AccountButton({
       aria-label={title}
       className={cn(
         "relative flex items-center justify-center transition-all duration-150",
-        // The same 24px square as every other control in the bar, docked or
-        // not — the bar reads as one toolbar only if nothing in it is a
-        // different size.
-        "size-6 rounded-md",
+        // The same square as every other control in the bar (`IconButton`'s
+        // `sm`), docked or not — the bar reads as one toolbar only if nothing
+        // in it is a different size.
+        "size-control-sm rounded-md",
         // A `<button>` still gets the arrow by default, and this one carries no
         // label or border — the pointer is most of what says it is pressable.
         // Matches the title bar's project-name button beside it.

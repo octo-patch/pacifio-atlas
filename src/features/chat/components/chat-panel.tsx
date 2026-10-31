@@ -1,4 +1,13 @@
-import { lazy, Suspense, memo, useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   clearAgentQuestion,
@@ -10,7 +19,10 @@ import { useChatStore } from "../stores/chat-store";
 import { pinScope, resolvePinIndex, type ChatPin } from "../stores/chat-pins-store";
 import { useDetailPanelStore } from "../stores/detail-panel-store";
 import { sessionScope } from "../lib/session-scope";
-import { useSessionDetailsStore } from "@/features/session-context/stores/session-details-store";
+import {
+  selectDockedOpen,
+  useSessionDetailsStore,
+} from "@/features/session-context/stores/session-details-store";
 import { useSessionHeaderSlot } from "../stores/session-header-slot-store";
 import { useSessionSidePanel, useSessionSidePanelStore } from "../stores/session-side-panel-store";
 import { appendNextStepsDirective } from "../lib/next-steps";
@@ -297,9 +309,10 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   // Narrow boolean — changes only when the detail panel opens or closes.
   const detailOpen = useDetailPanelStore((s) => !!s.targets[tabId]);
   // The session's scope, the key of its Details card and terminal drawer.
-  // This panel reads no Details state at all: the title-bar button and the
-  // dock lane subscribe for themselves, so a toggle re-renders them and never
-  // this panel or the transcript. Keyed by the SESSION, not the tab: "new
+  // This panel reads no Details state at all: the title-bar button, the dock
+  // lane and the dock-open flag subscribe for themselves, so a toggle
+  // re-renders them and never this panel or the transcript. Keyed by the
+  // SESSION, not the tab: "new
   // agent" and history both reuse this tab, and a tab-keyed card followed the
   // user into every session it showed.
   const scope = sessionScope(tabId, session?.acpSessionId);
@@ -356,10 +369,14 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   const [searchPaletteOpen, setSearchPaletteOpen] = usePaneFind(tabId);
   const rootRef = useRef<HTMLDivElement>(null);
   // The Details card docks at this column's top-right when the panel is wide
-  // enough (`use-context-dock.ts`). The room it needs is reserved from the
-  // panel's width alone, open or not, so toggling the card never moves the
-  // transcript or the composer. Off on an empty session, which has no column
-  // to clear: the card is its button's popover there.
+  // enough (`use-context-dock.ts`). The room it needs is kept only while the
+  // docked card is OPEN: closed, the transcript and composer centre in the
+  // whole panel instead of leaving an empty lane on the right; opening the
+  // card slides them over to clear it. The room is CSS variables set from
+  // the panel's width, applied by `group-data-[dock-open]/dock` classes, and
+  // the flag is set by `DockOpenFlag` — so a toggle re-renders that and
+  // nothing else, never this panel or the transcript. Off on an empty
+  // session, which has no column to clear: the card is its button's popover.
   const conversationRef = useRef<HTMLDivElement>(null);
   const contextDock = useContextDock(conversationRef, (session?.messages.length ?? 0) > 0);
   // The transcript's box, under the title bar and down to the composer: the
@@ -1507,8 +1524,24 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
       <div
         ref={conversationRef}
         data-chat-drop-zone
-        className="relative flex-1 flex flex-col min-w-0"
+        className="group/dock relative flex-1 flex flex-col min-w-0"
+        // The docked card's room, from the panel's width; the row and the
+        // composer stack apply it only while the card is open (`data-dock-open`,
+        // set by `DockOpenFlag`).
+        style={
+          contextDock.docked
+            ? ({
+                "--chat-dock-inset": `${contextDock.inset}px`,
+                "--chat-dock-reserve": `${contextDock.reserve}px`,
+              } as React.CSSProperties)
+            : undefined
+        }
       >
+        <DockOpenFlag
+          targetRef={conversationRef}
+          scope={scope}
+          docked={contextDock.docked && session.messages.length > 0}
+        />
         {/* The session's controls live in the window's title bar, beside the
             breadcrumb that names it; there is no header row in here, so the
             transcript starts right under the bar. */}
@@ -1532,17 +1565,13 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
           <div ref={stageRef} className="relative flex-1 min-h-0 flex flex-col">
             <div
               data-chat-row
-              className="relative flex min-h-0 flex-1 justify-center"
               // The docked card's room, as padding on the row the column is
-              // centred in: the column centres in what is left, and once it
-              // has to narrow, the left padding keeps the turn rail's gutter.
-              // Padding, so the rail — which measures from this row's left
-              // edge to the column — still reads the real gutter.
-              style={
-                contextDock.docked
-                  ? { paddingLeft: contextDock.inset, paddingRight: contextDock.reserve }
-                  : undefined
-              }
+              // centred in, while the card is open: the column centres in what
+              // is left, and once it has to narrow, the left padding keeps the
+              // turn rail's gutter. Padding, so the rail — which measures from
+              // this row's left edge to the column — still reads the real
+              // gutter.
+              className="relative flex min-h-0 flex-1 justify-center group-data-[dock-open]/dock:pl-(--chat-dock-inset) group-data-[dock-open]/dock:pr-(--chat-dock-reserve)"
             >
               {/* Capped at the transcript's own column width, so the thread
                     reads as one column centred in whatever space there is. */}
@@ -1588,20 +1617,15 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
 
         <div
           data-chat-composer-stack
-          className="relative"
           // The docked card's room, reserved the way the row above reserves
-          // it, so the composer stays centred under the column. From the
-          // panel's width alone: opening or closing a card never moves it.
+          // it (only while the card is open), so the composer stays centred
+          // under the column.
           //
           // A MARGIN, not padding: the pill below is `absolute inset-x-0`
           // against this element, and an absolute child is laid out against
           // the padding box, so under padding it would still span the full
           // width. A margin shrinks the box itself, which every child honours.
-          style={
-            contextDock.docked
-              ? { marginLeft: contextDock.inset, marginRight: contextDock.reserve }
-              : undefined
-          }
+          className="relative group-data-[dock-open]/dock:ml-(--chat-dock-inset) group-data-[dock-open]/dock:mr-(--chat-dock-reserve)"
         >
           {/* Anchored to this whole stack, not to the composer: the card below
               sits directly on top of the composer, so a pill anchored there
@@ -1938,4 +1962,27 @@ function WelcomeState() {
       </div>
     </div>
   );
+}
+
+/** Marks the chat panel `data-dock-open` while its docked Details card is
+ *  open, which applies the room the panel keeps for the card. A component of
+ *  its own, writing one attribute, so a toggle re-renders it and nothing
+ *  else. */
+function DockOpenFlag({
+  targetRef,
+  scope,
+  docked,
+}: {
+  targetRef: React.RefObject<HTMLElement | null>;
+  scope: string;
+  docked: boolean;
+}) {
+  const open = useSessionDetailsStore((s) => docked && selectDockedOpen(s, scope));
+  useLayoutEffect(() => {
+    const el = targetRef.current;
+    if (!el) return;
+    if (open) el.setAttribute("data-dock-open", "");
+    else el.removeAttribute("data-dock-open");
+  }, [targetRef, open]);
+  return null;
 }

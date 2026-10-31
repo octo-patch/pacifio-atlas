@@ -13,6 +13,7 @@ import {
 import { Kbd } from "@/ui/kbd";
 import { IconButton } from "@/ui/icon-button";
 import { PaneHeader } from "@/components/titlebar";
+import { BreadcrumbSeparator } from "@/components/breadcrumb-button";
 import { columnChrome } from "../lib/shell-edges";
 import { OPEN_SURFACE_MENU_EVENT, SURFACES, openSurface, surfaceForKey } from "../lib/surfaces";
 import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from "react-resizable-panels";
@@ -479,9 +480,7 @@ const TabColumn = memo(function TabColumn({
       >
         {main && chrome.breadcrumb && !showStrip && activeTab && namedInWindowBar(activeTab) && (
           <>
-            <span aria-hidden className="shrink-0 text-sm text-disabled">
-              /
-            </span>
+            <BreadcrumbSeparator />
             <MainTitle tab={activeTab} />
           </>
         )}

@@ -6,6 +6,8 @@
 //   Projects         the folders the session works in
 //   Lineage          the session it branched from, its branches, its agents
 //   Activity         its Bash calls and its plans, as panels
+//   (footer)         comments, share, open in the Timeline, find — pinned
+//                    under the sections, never scrolled away
 //
 // Showing it is a toggle and nothing else. It never takes layout space from
 // the transcript or the composer: docked, it is drawn into room the panel
@@ -32,6 +34,7 @@ import { ActivitySection } from "./activity-section";
 import { LineageSection } from "./lineage-section";
 import { ProjectsSection } from "./projects-section";
 import { VersionControlSection } from "./version-control-section";
+import { SessionFooter } from "./session-footer";
 import { WorkspaceSection } from "./workspace-section";
 
 export type DetailsPresentation = "docked" | "popover";
@@ -75,10 +78,12 @@ export function SessionDetailsCard({
   useLayoutEffect(() => {
     if (!content || density === "essential") return;
     const measure = () => {
-      const frame = content.parentElement;
-      // The content's own height plus the frame's border: what the card would
-      // need to show this step without scrolling.
-      const chrome = frame ? frame.offsetHeight - frame.clientHeight : 0;
+      const scroller = content.parentElement;
+      const card = scroller?.parentElement;
+      // The content's own height plus everything around the scroller — the
+      // card's border and the footer: what the card would need to show this
+      // step without scrolling.
+      const chrome = scroller && card ? card.offsetHeight - scroller.clientHeight : 0;
       let lists = 0;
       for (const list of content.querySelectorAll<HTMLElement>(GROWING_LISTS)) {
         // The first row of a list counts; what "Show N more" adds does not.
@@ -107,33 +112,41 @@ export function SessionDetailsCard({
       data-session-details-card={presentation}
       data-density={density}
       style={maxHeight === null ? undefined : { maxHeight }}
-      className="hide-scrollbar flex w-[300px] min-h-0 flex-col overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover text-popover-foreground shadow-md"
+      // A quiet surface: the popover colour mixed toward the page's (44%), so
+      // the card sits on the transcript without a slab of contrast. One line
+      // colour for the outline, the section dividers and the footer's rule
+      // (`--details-line`): the strong border colour, 40% toward the page.
+      // The sections scroll; the footer stays.
+      className="flex w-[300px] min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--details-line)] bg-[color-mix(in_srgb,var(--popover)_44%,var(--background))] [--details-line:color-mix(in_srgb,var(--atlas-border-strong)_60%,var(--background))] text-popover-foreground shadow-md"
     >
-      <div ref={setContent} className="flex flex-col">
-        {projectPath && workPath ? (
-          <>
-            <WorkspaceSection
-              projectPath={projectPath}
-              workPath={workPath}
-              showEnvironment={density === "full"}
-              showOpenIn={density !== "essential"}
-            />
-            <VersionControlSection
-              tabId={tabId}
-              projectPath={projectPath}
-              workPath={workPath}
-              compact={density !== "full"}
-            />
-            {density === "full" && <ProjectsSection tabId={tabId} projectPath={projectPath} />}
-          </>
-        ) : (
-          <p className="px-3.5 py-3 text-xs text-muted-foreground">
-            This session has no project folder.
-          </p>
-        )}
-        {density === "full" && <LineageSection tabId={tabId} projectPath={projectPath} />}
-        <ActivitySection tabId={tabId} presentation={presentation} />
+      <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div ref={setContent} className="flex flex-col">
+          {projectPath && workPath ? (
+            <>
+              <WorkspaceSection
+                projectPath={projectPath}
+                workPath={workPath}
+                showEnvironment={density === "full"}
+                showOpenIn={density !== "essential"}
+              />
+              <VersionControlSection
+                tabId={tabId}
+                projectPath={projectPath}
+                workPath={workPath}
+                compact={density !== "full"}
+              />
+              {density === "full" && <ProjectsSection tabId={tabId} projectPath={projectPath} />}
+            </>
+          ) : (
+            <p className="px-3.5 py-3 text-xs text-muted-foreground">
+              This session has no project folder.
+            </p>
+          )}
+          {density === "full" && <LineageSection tabId={tabId} projectPath={projectPath} />}
+          <ActivitySection tabId={tabId} presentation={presentation} />
+        </div>
       </div>
+      <SessionFooter tabId={tabId} projectPath={projectPath} />
     </div>
   );
 }

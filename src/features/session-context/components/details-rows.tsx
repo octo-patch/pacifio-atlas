@@ -63,20 +63,28 @@ export function DiffStat({ additions, deletions }: { additions: number; deletion
 export function DetailsSection({
   label,
   title,
+  icon: HeadingIcon,
   actions,
   children,
 }: {
   label: string;
   title?: string;
+  /** A small glyph before the heading. */
+  icon?: LucideIcon;
   actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <section aria-label={label} className="border-t border-border p-1.5 first:border-t-0">
+    <section
+      aria-label={label}
+      // `--details-line`: the card's one line colour (session-details-card).
+      className="border-t border-[var(--details-line)] p-1.5 first:border-t-0"
+    >
       {title && (
         <div className="flex min-h-7 min-w-0 items-center justify-between gap-2 px-2">
-          <h3 className="min-w-0 truncate text-2xs font-medium text-muted-foreground select-none">
-            {title}
+          <h3 className="flex min-w-0 items-center gap-1.5 text-2xs font-medium text-muted-foreground select-none">
+            {HeadingIcon ? <HeadingIcon size={12} aria-hidden className="shrink-0" /> : null}
+            <span className="min-w-0 truncate">{title}</span>
           </h3>
           {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
         </div>
@@ -130,11 +138,17 @@ export function DetailsRow({
   );
 }
 
-/** The ⌄ cell at a select row's end, behind a divider. */
+/** The ⌄ at a row's end: a small glass circle (`glass-rim`, the sidebar
+ *  dock's outline), no divider. */
+const CHEVRON_CIRCLE =
+  "glass-rim flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground";
+
+/** The ⌄ at a select row's end. Part of the row's button, so the row's own
+ *  hover answers for it. */
 function ChevronCell() {
   return (
-    <span className="-me-2 flex h-4 w-8 shrink-0 items-center justify-center border-s border-border text-muted-foreground">
-      <ChevronDown size={14} aria-hidden />
+    <span className={cn(CHEVRON_CIRCLE, "-me-1")}>
+      <ChevronDown size={13} aria-hidden />
     </span>
   );
 }
@@ -208,13 +222,12 @@ export function DetailsSplit({
         className={cn(
           ROW,
           multiline ? ROW_MULTI : ROW_SINGLE,
-          "flex-1 rounded-e-none",
+          "flex-1",
           disabled ? DISABLED : INTERACTIVE,
         )}
       >
         {children}
       </button>
-      <span aria-hidden className="h-4 w-px shrink-0 bg-border" />
       {trailing ?? (
         <DropdownMenu onOpenChange={(open) => open && onMenuOpen?.()}>
           <DropdownMenuTrigger render={<SplitMenuButton aria-label={menuLabel} />} />
@@ -227,18 +240,20 @@ export function DetailsSplit({
   );
 }
 
-/** A split's ⌄: the trailing cell, its own hover. */
+/** A split's ⌄: its own glass circle, with its own hover (the fill lifts,
+ *  `glass-rim-control`) and the open state of its menu. */
 function SplitMenuButton(props: ComponentProps<"button">) {
   return (
     <button
       type="button"
       {...props}
       className={cn(
-        "flex h-8 w-8 shrink-0 items-center justify-center self-stretch rounded-md rounded-s-none text-muted-foreground outline-none transition-colors duration-fast ease-out-strong",
-        INTERACTIVE,
+        CHEVRON_CIRCLE,
+        "glass-rim-control mx-1 cursor-pointer outline-none transition-colors duration-fast ease-out-strong",
+        "hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-popup-open:text-foreground",
       )}
     >
-      <ChevronDown size={14} aria-hidden />
+      <ChevronDown size={13} aria-hidden />
     </button>
   );
 }

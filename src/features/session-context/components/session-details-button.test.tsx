@@ -53,7 +53,7 @@ describe("SessionDetailsButton", () => {
     mount();
     // Not the panel glyph the right panel toggle uses.
     expect(button().querySelector(".lucide-panel-right")).toBeNull();
-    expect(button().querySelector(".lucide-square-menu")).not.toBeNull();
+    expect(button().querySelector(".lucide-square-dashed-mouse-pointer")).not.toBeNull();
   });
 
   it("opens the card as a popover where the panel cannot dock it", async () => {

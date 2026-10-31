@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
 //
-// The session Details card is a toggle and nothing else: opening or closing
-// it must not change the transcript's or the composer's width or position,
-// and must not re-render the transcript. It descends from a rail that took
-// its width out of the row (and a matching `marginRight` on the composer), so
-// the transcript narrowed and slid left every time it opened. Now the docked
-// card is drawn into room the panel keeps whether or not it shows, and the
-// popover form floats over the transcript.
+// The session Details card must not re-render the transcript when it opens or
+// closes, and must not restyle the boxes the column is laid out from: the
+// room the docked card needs is the panel's width-derived CSS variables,
+// applied by class only while the panel carries `data-dock-open`
+// (`chat-panel-context-dock.test.tsx` covers where the column lands). It
+// descends from a rail that took its width out of the row with an inline
+// `marginRight`, re-rendering the panel on every toggle. The popover form
+// floats over the transcript.
 //
 // This renders the real panel and compares every box the column is laid out
 // from (the row it is centred in, the column, the composer stack) with the
@@ -139,8 +140,8 @@ const railMargin = (root: HTMLElement): string | undefined => {
   return undefined;
 };
 
-describe("the Details card never moves the transcript or the composer", () => {
-  it("docked: the card appears in the lane and every box stays put", async () => {
+describe("the Details card never re-renders or restyles the transcript's frame", () => {
+  it("docked: the card appears in the lane, flagged open on the panel; no box is restyled", async () => {
     withMessages();
     const { container } = mount();
     const scope = sessionScope(TAB, undefined);
@@ -156,6 +157,9 @@ describe("the Details card never moves the transcript or the composer", () => {
     expect(container.querySelector("[data-chat-row] [data-testid='details-card']")).toBeNull();
     expect(frame(container)).toEqual(closed);
     expect(railMargin(container)).toBeUndefined();
+    expect(container.querySelector("[data-chat-drop-zone]")?.hasAttribute("data-dock-open")).toBe(
+      true,
+    );
 
     act(() => useSessionDetailsStore.getState().actions.toggle(scope));
     expect(screen.queryByTestId("details-card")).toBeNull();

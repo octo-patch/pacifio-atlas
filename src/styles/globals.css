@@ -503,7 +503,8 @@
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent);
 }
 
-/* The team chat composer's corner: half its one-line height, so a single
+/* The team chat composer's corner, and the agent composer's input card
+   while folded: half a one-line height (both are 46px), so a single
    line is an exact capsule. In px, like the bar's own geometry — the bar is
    44px + a 1px rim top and bottom, all literal px — because the `rounded-*`
    scale is in rem and shrinks with the UI zoom, which left the ends short of

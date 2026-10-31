@@ -1,11 +1,12 @@
 // Where the docked session Details card goes, and the room the transcript
 // leaves for it.
 //
-// The rule the user asked for: showing or hiding the card is a toggle and
-// nothing else. The transcript column and the composer never move, narrow or
-// reflow when it opens. So the room is reserved by the panel's WIDTH alone —
-// `resolveContextDock` does not take the open state, and cannot — and the
-// card is drawn into that room as an absolutely positioned layer.
+// `resolveContextDock` answers, from the panel's width alone, the room the
+// transcript must leave when the card is docked open. The chat panel applies
+// it only while the card IS open: closed, the column centres in the whole
+// panel (an empty lane on the right read as broken), and opening the card
+// slides the column over to clear it. The card itself is drawn into that
+// room as an absolutely positioned layer.
 //
 // The reservation: the column stays centred while its right edge clears the
 // card; where it would not, it slides left, and only once it has slid as far
@@ -22,9 +23,11 @@ import { TURN_RAIL_PERSISTENT_GUTTER } from "@/features/chat/lib/row-metrics";
 /** The card's width (the popover's width too). */
 export const CONTEXT_CARD_WIDTH = 300;
 /** The gap between the card and the panel's edges. */
-export const CONTEXT_CARD_GAP = 12;
-/** Clear space between the transcript column and the card. */
-export const CONTEXT_CARD_CLEARANCE = 24;
+export const CONTEXT_CARD_GAP = 20;
+/** Clear space between the transcript column and the card. Smaller than the
+ *  edge gap was, so the card sits evenly between the two rather than hard
+ *  against the window's edge. */
+export const CONTEXT_CARD_CLEARANCE = 16;
 /** Below this the column beside the card is too narrow to read; no dock. */
 export const MIN_DOCKED_COLUMN = 560;
 /** How far left the column may slide: it stops at the turn rail's gutter. */

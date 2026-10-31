@@ -2,10 +2,9 @@
 //
 // `useContextDock` measures the panel and answers the room to reserve
 // (`resolveContextDock`, from the width alone) and whether it docks at all.
-// The card itself is drawn into that room by the chat panel's dock
-// lane (`session-dock-lane.tsx`), an absolute layer: opening or closing it
-// changes nothing the transcript or the composer is laid out from, so
-// neither moves.
+// The chat panel keeps that room only while the docked card is open; the
+// card itself is drawn into it by the dock lane (`session-dock-lane.tsx`), an
+// absolute layer.
 
 import { useEffect, useState, type RefObject } from "react";
 

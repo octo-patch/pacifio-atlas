@@ -1,14 +1,16 @@
 // @vitest-environment happy-dom
 //
-// The session Details card docks beside the transcript on a wide panel, and
-// showing or hiding it must not move the transcript column or the composer.
-// The room is reserved from the panel's width, open or closed, and the card is
-// an absolute layer drawn into it. This renders the real panel with the app's
-// column width (`--atlas-chat-column: 760px`) at a spread of panel widths —
-// one too narrow to dock (popover), one where the column narrows, one where it
-// slides left, one where it stays centred — and compares every box the column
-// is laid out from (the row it is centred in, the column itself, the composer
-// stack) with the card closed, open, and closed again.
+// The session Details card docks beside the transcript on a wide panel. While
+// it is closed the transcript column and the composer centre in the whole
+// panel — no empty lane is kept for a card that is not there — and while it
+// is open they leave it the room `resolveContextDock` answers for the panel's
+// width; the card is an absolute layer drawn into that room. This renders the
+// real panel with the app's column width (`--atlas-chat-column: 760px`) at a
+// spread of panel widths — one too narrow to dock (popover), one where the
+// column narrows, one where it slides left, one where it stays centred — and
+// reads every box the column is laid out from (the row it is centred in, the
+// column itself, the composer stack) with the card closed, open, and closed
+// again.
 //
 // The panel's children are stubbed: what is under test is the frame.
 
@@ -108,41 +110,50 @@ function mount() {
   );
 }
 
-/** Every box the transcript column's position and width come from. */
-function frame(root: HTMLElement) {
-  const box = (sel: string) => {
-    const el = root.querySelector<HTMLElement>(sel);
-    expect(el, sel).not.toBeNull();
-    return { style: el!.getAttribute("style"), className: el!.className };
-  };
-  return {
-    row: box("[data-chat-row]"),
-    column: box("[data-chat-column]"),
-    composer: box("[data-chat-composer-stack]"),
-  };
-}
-
 const card = (root: HTMLElement) => root.querySelector("[data-session-details-dock]");
 
-/** A `padding-*` / `margin-*` px value out of an inline style, 0 when unset. */
-function px(style: string | null, prop: string): number {
-  const match = new RegExp(`${prop}:\\s*(-?\\d+(?:\\.\\d+)?)px`).exec(style ?? "");
-  return match ? Number(match[1]) : 0;
+/** The room the panel keeps for the card: its width-derived variables, and
+ *  whether it applies them (`data-dock-open`, while the card is open). The
+ *  row and composer take it as padding / margin through `group-data` classes,
+ *  which happy-dom does not evaluate, so this reads the inputs to them. */
+function room(root: HTMLElement) {
+  const zone = root.querySelector<HTMLElement>("[data-chat-drop-zone]")!;
+  const read = (name: string) => {
+    const v = zone.style.getPropertyValue(name);
+    return v ? Number.parseFloat(v) : 0;
+  };
+  const open = zone.hasAttribute("data-dock-open");
+  return {
+    open,
+    reserve: read("--chat-dock-reserve"),
+    inset: read("--chat-dock-inset"),
+    /** What the row is padded by, as the browser applies it. */
+    applied: open
+      ? { left: read("--chat-dock-inset"), right: read("--chat-dock-reserve") }
+      : { left: 0, right: 0 },
+  };
 }
 
-/** Where the column lands in a panel `width` wide: centred, at most `COLUMN`
- *  wide, in the row less its padding — as the browser lays it out. */
-function columnBox(width: number, rowStyle: string | null) {
-  const left = px(rowStyle, "padding-left");
-  const right = px(rowStyle, "padding-right");
-  const box = width - left - right;
+/** The row and composer carry the classes that turn the flag into room. */
+function wired(root: HTMLElement) {
+  const row = root.querySelector("[data-chat-row]")!.className;
+  const composer = root.querySelector("[data-chat-composer-stack]")!.className;
+  expect(row).toContain("group-data-[dock-open]/dock:pr-(--chat-dock-reserve)");
+  expect(row).toContain("group-data-[dock-open]/dock:pl-(--chat-dock-inset)");
+  expect(composer).toContain("group-data-[dock-open]/dock:mr-(--chat-dock-reserve)");
+  expect(composer).toContain("group-data-[dock-open]/dock:ml-(--chat-dock-inset)");
+}
+
+/** Where the column lands given the row's applied padding. */
+function columnIn(width: number, applied: { left: number; right: number }) {
+  const box = width - applied.left - applied.right;
   const column = Math.min(COLUMN, box);
-  const start = left + (box - column) / 2;
+  const start = applied.left + (box - column) / 2;
   return { left: start, right: start + column, column };
 }
 
 describe("the docked Details card in the chat panel", () => {
-  it("never moves the column at any width, whether it docks, narrows, slides or stays centred", () => {
+  it("centres the column while the card is closed and clears the open card at any width", () => {
     document.documentElement.style.setProperty("--atlas-chat-column", `${COLUMN}px`);
     // happy-dom does not inherit custom properties into computed style, so
     // the panel's read of the variable is answered as a browser would.
@@ -161,6 +172,7 @@ describe("the docked Details card in the chat panel", () => {
       WIDTH = width;
       reset();
       const { container, unmount } = mount();
+      wired(container);
       const expected = resolveContextDock(width, COLUMN);
       branches.add(
         !expected.docked
@@ -172,50 +184,50 @@ describe("the docked Details card in the chat panel", () => {
               : "centred",
       );
 
-      const closed = frame(container);
-      // Reserved from the width alone, before any card exists.
-      expect(px(closed.row.style, "padding-right"), `reserve at ${width}`).toBe(expected.reserve);
-      expect(px(closed.row.style, "padding-left"), `inset at ${width}`).toBe(expected.inset);
-      expect(px(closed.composer.style, "margin-right")).toBe(expected.reserve);
-      const before = columnBox(width, closed.row.style);
+      // Closed: the room is known from the width but not applied, so the
+      // column centres in the whole panel.
+      const closed = room(container);
+      expect(closed.open, `closed flag at ${width}`).toBe(false);
+      expect(closed.reserve, `reserve var at ${width}`).toBe(expected.reserve);
+      expect(closed.inset, `inset var at ${width}`).toBe(expected.inset);
+      const centred = columnIn(width, closed.applied);
+      expect(centred.left, `centred at ${width}`).toBe((width - centred.column) / 2);
+
+      // Open: applied, and the column ends clear of the card.
+      act(() => useSessionDetailsStore.getState().actions.toggle(SCOPE));
+      expect(card(container) !== null, `card at ${width}`).toBe(expected.docked);
+      const open = room(container);
+      expect(open.open, `open flag at ${width}`).toBe(expected.docked);
       if (expected.docked) {
-        // The column ends clear of where the card will be drawn.
-        expect(before.right).toBeLessThanOrEqual(
+        expect(columnIn(width, open.applied).right).toBeLessThanOrEqual(
           width - CONTEXT_CARD_GAP - CONTEXT_CARD_WIDTH - CONTEXT_CARD_CLEARANCE,
         );
       }
 
       act(() => useSessionDetailsStore.getState().actions.toggle(SCOPE));
-      expect(card(container) !== null, `card at ${width}`).toBe(expected.docked);
-      expect(frame(container), `open at ${width}`).toEqual(closed);
-      expect(columnBox(width, frame(container).row.style)).toEqual(before);
-
-      act(() => useSessionDetailsStore.getState().actions.toggle(SCOPE));
       expect(card(container)).toBeNull();
-      expect(frame(container), `closed again at ${width}`).toEqual(closed);
+      expect(room(container).open, `closed again at ${width}`).toBe(false);
       unmount();
     }
     // Every branch of the reservation was laid out, not just the easy one.
     expect([...branches].sort()).toEqual(["centred", "narrowed", "popover", "slid"]);
   });
 
-  it("never moves the transcript column or the composer when toggled", () => {
+  it("applies the room only while the card is open", () => {
     const { container } = mount();
+    wired(container);
     const { reserve } = resolveContextDock(WIDTH, Number.POSITIVE_INFINITY);
     expect(reserve).toBeGreaterThan(0);
 
-    const closed = frame(container);
-    // Reserved while closed: the room exists before the card does.
-    expect(closed.row.style).toContain(`padding-right: ${reserve}px`);
-    expect(closed.composer.style).toContain(`margin-right: ${reserve}px`);
+    expect(room(container)).toMatchObject({ open: false, reserve });
     expect(card(container)).toBeNull();
 
     act(() => useSessionDetailsStore.getState().actions.toggle(SCOPE));
     expect(card(container)).not.toBeNull();
-    expect(frame(container)).toEqual(closed);
+    expect(room(container)).toMatchObject({ open: true, reserve });
 
     act(() => useSessionDetailsStore.getState().actions.toggle(SCOPE));
     expect(card(container)).toBeNull();
-    expect(frame(container)).toEqual(closed);
+    expect(room(container)).toMatchObject({ open: false, reserve });
   });
 });

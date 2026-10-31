@@ -114,7 +114,6 @@ import type {
   PastSessionRef,
 } from "../lib/mentions";
 import { toast } from "sonner";
-import { useComposerResting } from "@/features/chat/hooks/use-composer-resting";
 import { useComposerFileDrop } from "../hooks/use-composer-file-drop";
 import { scratchPathForFile } from "@/lib/scratch-file";
 import { useAppStore } from "@/features/app/stores/app-store";
@@ -1252,21 +1251,50 @@ export function MessageInput({
     onDropFiles,
   });
 
-  // Scrolled back through the session, an empty composer folds to a pill
-  // with its toolbar tucked under it (`use-composer-resting.ts`). Anything
-  // in it — text, a staged image, a queued message, an open picker — keeps
-  // it open.
-  const resting = useComposerResting(
-    composerRef,
+  // Two forms. Focused, the input card with its toolbar tray tucked under
+  // it; away from the composer, the input alone as a capsule, the tray slid
+  // up behind it and the composer's height closed up after it. Anything in
+  // the composer — text, a staged image, a queued message, an open picker or
+  // menu — keeps it open, so nothing is hidden mid-task.
+  const [composerFocused, setComposerFocused] = useState(false);
+  const collapsible =
     !hasText &&
-      stagedImages.length === 0 &&
-      queue.length === 0 &&
-      trigger === null &&
-      slashTrigger === null &&
-      githubSyncing === null &&
-      !isDropTarget,
-  );
-  const expandResting = resting.expand;
+    stagedImages.length === 0 &&
+    queue.length === 0 &&
+    trigger === null &&
+    slashTrigger === null &&
+    githubSyncing === null &&
+    !isDropTarget;
+  const collapsed = collapsible && !composerFocused;
+  // What folds it: focus moving to something ELSE (Tab away), a press
+  // outside it, or Esc. Not focus merely leaving: WebKit does not focus a
+  // button on click, so pressing a tray pill drops focus to <body> — read as
+  // "left", that folded the tray out from under the pill being pressed.
+  // Never while one of its menus is open (they may live in a portal), nor
+  // when the WINDOW lost focus (switching apps is not leaving the composer).
+  const composerMenuOpen = () =>
+    !!composerRef.current?.querySelector("[data-popup-open], [aria-expanded='true']");
+  const onComposerBlur = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (!document.hasFocus()) return;
+      const root = composerRef.current;
+      const active = document.activeElement;
+      if (!root || !active || active === document.body) return;
+      if (root.contains(active) || composerMenuOpen()) return;
+      setComposerFocused(false);
+    });
+  }, []);
+  useEffect(() => {
+    if (!composerFocused) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const root = composerRef.current;
+      if (!root || !(event.target instanceof Node) || root.contains(event.target)) return;
+      if (composerMenuOpen()) return;
+      setComposerFocused(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [composerFocused]);
 
   // "+" menu → "Add files or photos". The Tauri dialog hands back real
   // paths (a browser file input wouldn't), which is what makes the
@@ -1445,7 +1473,6 @@ export function MessageInput({
   // only while an image is staged, so the common keystroke pays nothing.
   const { onDocChange: mirrorDraft } = draft;
   const handleDocChange = useCallback(() => {
-    expandResting();
     mirrorDraft();
     if (!stagedRef.current.some((img) => img.path)) return;
     const input = inputRef.current;
@@ -1454,7 +1481,7 @@ export function MessageInput({
       const next = prev.filter((img) => !img.path || input.hasMention("file", img.path));
       return next.length === prev.length ? prev : next;
     });
-  }, [expandResting, mirrorDraft]);
+  }, [mirrorDraft]);
 
   // A paste over the large-paste limit (`isLargePaste`: ~4,000 characters or
   // 80 lines) — a log, a stack dump, a whole file — becomes a chip holding
@@ -1943,7 +1970,7 @@ export function MessageInput({
         <div
           ref={composerRef}
           data-chat-composer
-          data-resting={resting.resting || undefined}
+          data-collapsed={collapsed || undefined}
           className={cn(
             // Positioned + z-indexed so the composer paints over — and visually
             // tucks — the PlanDock's bottom edge (the attached-panel recipe).
@@ -1958,17 +1985,12 @@ export function MessageInput({
             // also swallowed clicks on the menu's first row (the pill sets
             // `pointer-events-auto`). Raising the context is the fix; raising
             // the menus themselves cannot work from inside it.
-            // Two-layer shell: this OUTER muted layer carries the toolbar as
-            // its exposed bottom strip; the INNER surface below holds the
-            // input + send button (the focus ring lives there — the "active
-            // field" is the input surface, not the toolbar).
-            "relative z-30 rounded-2xl border border-[var(--border)] bg-[var(--card)]",
+            // The shell draws nothing: the input card is a surface of its own
+            // and the toolbar a tray tucked under it (a muted outer card
+            // around both is gone).
+            "relative z-30",
             // The footer pills' labels collapse against THIS width.
             "@container",
-            "shadow-md transition-[background-color,border-color,box-shadow] duration-200 ease-out-strong",
-            // Resting: the shell steps back so the input surface floats as a
-            // pill, and the toolbar shows as a tray tucked under it.
-            resting.resting && "border-transparent bg-transparent shadow-none",
             // NOTE: the disabled dim is NOT applied here. It used to be
             // (`disabled && "opacity-60"` on this shell), and it faded the
             // whole composer — footer pills, the agent switcher, and every
@@ -1980,10 +2002,37 @@ export function MessageInput({
             githubSyncing !== null && "opacity-60 pointer-events-none",
           )}
           onFocusCapture={() => {
-            resting.onFocusCapture();
+            setComposerFocused(true);
             handleFocusCapture();
           }}
-          onPointerDownCapture={resting.onPointerDownCapture}
+          onBlurCapture={onComposerBlur}
+          // A press anywhere in it is being in it, focus or not (see above).
+          onPointerDownCapture={() => setComposerFocused(true)}
+          // A press on the composer's own surface — the tray's padding, the
+          // gaps between pills — keeps focus where it is. Left alone, it
+          // moved focus to <body>, which folded the composer under the click.
+          onMouseDown={(e) => {
+            const target = e.target as Element;
+            if (
+              !target.closest(
+                "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='menuitem'], [tabindex]",
+              )
+            ) {
+              e.preventDefault();
+            }
+          }}
+          // Esc folds it, as clicking away does. Caught on the way DOWN:
+          // ProseMirror marks Esc handled in the editor, so it never
+          // bubbles back out unprevented. An open picker or menu keeps the
+          // composer from folding (`collapsible`), and is left its own Esc.
+          onKeyDownCapture={(e) => {
+            if (e.key !== "Escape" || !collapsible) return;
+            // A tray dropup (agent, model, options) that is open takes Esc to
+            // close itself.
+            if (e.currentTarget.querySelector("[data-popup-open], [aria-expanded='true']")) return;
+            (document.activeElement as HTMLElement | null)?.blur();
+            setComposerFocused(false);
+          }}
         >
           {githubSyncing !== null && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[var(--background)]/40 backdrop-blur-[1px]">
@@ -2040,8 +2089,15 @@ export function MessageInput({
               // in globals.css) normally provides it; the floor makes the
               // geometry hold before the editor chunk has landed, or with no
               // editor mounted at all.
-              "relative m-1 min-h-[44px] rounded-xl border border-[var(--border)] bg-[var(--background)]",
-              "transition-[border-color,box-shadow] duration-150",
+              // `z-10` so the tray slides up BEHIND it. A capsule while the
+              // composer is folded (`rounded-composer`: half the card's 46px),
+              // a card while it is open; the corner eases between the two.
+              // No bottom margin: the tray hangs straight off its edge.
+              // `shadow-sm`: the `md` rung cast onto the tray under it and read
+              // as the tray being disabled.
+              "relative z-10 mx-1 mt-1 min-h-[44px] border border-[var(--border)] bg-[var(--background)] shadow-sm",
+              collapsed ? "rounded-composer" : "rounded-xl",
+              "transition-[border-radius,border-color,box-shadow] duration-base ease-out-strong motion-reduce:transition-none",
               // Focus treatment at HALF strength: the full border-focus +
               // /20 accent ring read far too loud on the nested surface.
               "focus-within:border-[color-mix(in_srgb,var(--atlas-border-strong)_50%,var(--border))]",
@@ -2051,7 +2107,6 @@ export function MessageInput({
               // button is already disabled and submit()/Cmd+Enter are gated
               // on `disabled`.
               disabled && "opacity-60",
-              resting.resting && "shadow-md",
             )}
           >
             {/* Only the text area is pointer-blocked while `disabled`:
@@ -2147,63 +2202,78 @@ export function MessageInput({
               </button>
             </Hint>
           </div>
-          {/* Footer strip — the exposed band of the outer shell. Pill labels
-              collapse to icons as the shell narrows (`composerPillLabelClass`),
-              so the row never wraps or runs past the edge. No overflow clip:
-              the pills' dropups are children and would be cut off. */}
+          {/* The toolbar tray, tucked under the input card. Folding, it
+              slides up behind the card while its row closes, so the two read
+              as one bar retracting into the input; opening runs it back
+              down. The row's height animates as a grid track (0fr ↔ 1fr).
+              It clips only while folded — open, the pills' dropups are its
+              children and must not be cut off. Pill labels collapse to icons
+              as the shell narrows (`composerPillLabelClass`), so the row
+              never wraps or runs past the edge. */}
           <div
             className={cn(
-              "flex items-center justify-between gap-2 px-2 pb-1.5 pt-1",
-              "transition-[margin,opacity,background-color] duration-200 ease-out-strong",
-              // Resting: a tray inset under the pill, quiet until the pointer
-              // or focus reaches it. Its pickers work in place.
-              resting.resting &&
-                "mx-5 -mt-1 rounded-b-xl border border-t-0 border-[var(--border)] bg-[var(--card)] pt-2 opacity-70 hover:opacity-100 focus-within:opacity-100",
+              "grid transition-[grid-template-rows,padding] duration-base ease-out-strong motion-reduce:transition-none",
+              // Folded, the capsule gets room underneath to match the room
+              // above it, so it does not sit on the panel's bottom edge.
+              collapsed ? "grid-rows-[0fr] pb-3" : "grid-rows-[1fr] pb-0",
             )}
           >
-            <div className="flex min-w-0 items-center gap-1">
-              <ComposerAddMenu
-                // `disabledProp`, NOT `disabled`: a missing org AI grant locks
-                // the input, not the toolbar. Greying the + here made the whole
-                // footer read as dead while the fix (switch agent, request a
-                // grant) is one row away.
-                disabled={disabledProp || githubSyncing !== null}
-                projectPath={useAppStore.getState().currentProject?.path ?? null}
-                agentId={switchableAgent}
-                imageSupported={imageSupported}
-                onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
-                onAttachMedia={() => void pickMedia()}
-                onTakeScreenshot={(mode) => void handleTakeScreenshot(mode)}
-                onCloneRepo={(repo) => void handleCloneRepo(repo)}
-                onPickSession={handlePickSession}
-                onPickProject={handlePickProject}
-              />
-              {/* Agent / mode / model as one grouped, animated picker — the
+            <div className={cn("min-h-0", collapsed && "overflow-hidden")}>
+              <div
+                inert={collapsed}
+                className={cn(
+                  // Fill: the panel-input background (near-black on the default
+                  // dark theme), a shade off the input card above, not a full step.
+                  "mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-[var(--atlas-panel-input-background)] px-2 pb-1.5 pt-2",
+                  "transition-[translate,opacity] duration-base ease-out-strong motion-reduce:transition-none",
+                  collapsed && "-translate-y-full opacity-0",
+                )}
+              >
+                <div className="flex min-w-0 items-center gap-1">
+                  <ComposerAddMenu
+                    // `disabledProp`, NOT `disabled`: a missing org AI grant locks
+                    // the input, not the toolbar. Greying the + here made the whole
+                    // footer read as dead while the fix (switch agent, request a
+                    // grant) is one row away.
+                    disabled={disabledProp || githubSyncing !== null}
+                    projectPath={useAppStore.getState().currentProject?.path ?? null}
+                    agentId={switchableAgent}
+                    imageSupported={imageSupported}
+                    onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
+                    onAttachMedia={() => void pickMedia()}
+                    onTakeScreenshot={(mode) => void handleTakeScreenshot(mode)}
+                    onCloneRepo={(repo) => void handleCloneRepo(repo)}
+                    onPickSession={handlePickSession}
+                    onPickProject={handlePickProject}
+                  />
+                  {/* Agent / mode / model as one grouped, animated picker — the
                   pills double as its tab strip. Cycling shortcuts (⌥/ agents,
                   ⇧⇥ Claude modes) are unchanged. The native agent's BYOK
                   pickers (ProviderModelPills etc.) stay separate below. */}
-              <ComposerGroupsMenu
-                tabId={tabId}
-                currentAgent={switchableAgent}
-                onSwitchAgent={handleSwitchAgent}
-              />
-              {/* The BYOK ProviderModelPills used to render here for the
+                  <ComposerGroupsMenu
+                    tabId={tabId}
+                    currentAgent={switchableAgent}
+                    onSwitchAgent={handleSwitchAgent}
+                  />
+                  {/* The BYOK ProviderModelPills used to render here for the
                   native agent — the user's own provider keys, which the
                   gateway agent cannot use. Model choice now goes through the
                   same ACP model pill as every other agent, fed by the seam's
                   published catalogue. */}
-              {agentType === "atlas-agent" && <EffortPill tabId={tabId} />}
-            </div>
-            {/* Right side, in this order: the session's usage, the agent's own
+                  {agentType === "atlas-agent" && <EffortPill tabId={tabId} />}
+                </div>
+                {/* Right side, in this order: the session's usage, the agent's own
                 knobs, then the live
                 implementation-plan pill hard against the right edge (arc
                 progress + count; opens its own morphing task-list panel, and
                 replaces the PlanDock strip that used to sit above the
                 composer). Both are right-anchored dropups. */}
-            <div className="flex shrink-0 items-center gap-1">
-              <UsagePill tabId={tabId} />
-              <ComposerOptionsPill tabId={tabId} />
-              <PlanTasksPill tabId={tabId} />
+                <div className="flex shrink-0 items-center gap-1">
+                  <UsagePill tabId={tabId} />
+                  <ComposerOptionsPill tabId={tabId} />
+                  <PlanTasksPill tabId={tabId} />
+                </div>
+              </div>
             </div>
           </div>
         </div>
