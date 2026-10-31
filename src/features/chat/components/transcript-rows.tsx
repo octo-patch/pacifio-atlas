@@ -974,10 +974,12 @@ export const TurnFooterRowView = memo(function TurnFooterRowView({
   const edited = row.files.some((f) => f.kind === "edit");
   const responseRowId = row.responseRowId;
   return (
-    // With a footer, `pb-11` is the old 16px gap plus the footer's 28px band
-    // (`ProseRowActions`, placed `bottom-4`): reserved whether hovered or not,
-    // so revealing it never moves anything.
-    <Column className={cn("pt-1", responseRowId ? "relative pb-11" : "pb-4")}>
+    // With a footer, `pb-16` is the old 16px gap, the footer's 28px band
+    // (`ProseRowActions`, placed `bottom-4`) and a gap between the band and the
+    // card above it — at `pb-11` the copy / pin / comment row sat against the
+    // changed-files card. Reserved whether hovered or not, so revealing it
+    // never moves anything.
+    <Column className={cn("pt-1", responseRowId ? "relative pb-16" : "pb-4")}>
       {edited ? (
         <ChangedFilesCard turnKey={row.turnKey} tabId={tabId} files={row.files} />
       ) : (

@@ -225,21 +225,27 @@ function TerminalTab({
         summary.exited && "opacity-60",
       )}
     >
-      <span className="relative flex size-3 shrink-0 items-center justify-center">
+      <span className="relative flex size-[12px] shrink-0 items-center justify-center">
         <span
           className={cn(
             "flex items-center justify-center",
             closable && "group-hover/tab:invisible",
           )}
         >
-          {/* Dashed ring at rest; the same ring turning while a command runs. */}
-          <CircleDashed
-            size={11}
-            aria-hidden
+          {/* Dashed ring at rest; the same ring turning while a command runs.
+              It turns as an even, whole-pixel box on its own layer: an odd
+              size (it was 11px) puts the centre on a half pixel, which is
+              re-snapped to the pixel grid every frame and reads as a wobble. */}
+          <span
             className={cn(
-              summary.command !== null ? "animate-spin text-foreground" : "text-muted-foreground",
+              "flex size-[12px] items-center justify-center",
+              summary.command !== null
+                ? "animate-spin text-foreground will-change-transform"
+                : "text-muted-foreground",
             )}
-          />
+          >
+            <CircleDashed size={12} aria-hidden />
+          </span>
         </span>
         {closable ? (
           <button
